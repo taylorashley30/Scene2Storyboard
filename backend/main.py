@@ -3,10 +3,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
 import os
-from typing import Optional
+from typing import Optional, List, Tuple
 from pydantic import BaseModel
 from utils.file_handler import FileHandler
 from utils.youtube_handler import YouTubeHandler
+from processors.scene_detector import SceneDetector
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -31,10 +32,16 @@ os.makedirs(UPLOADS_DIR, exist_ok=True)
 # Initialize handlers
 file_handler = FileHandler()
 youtube_handler = YouTubeHandler()
+scene_detector = SceneDetector()
 
 # Models
 class VideoInput(BaseModel):
     youtube_url: Optional[str] = None
+
+class SceneInfo(BaseModel):
+    start_time: float
+    end_time: float
+    frame_path: str
 
 # Health check endpoint
 @app.get("/health")
@@ -52,10 +59,23 @@ async def process_video_upload(file: UploadFile = File(...)):
         # Save file
         file_path = await file_handler.save_upload_file(file)
         
-        # TODO: Implement video processing logic
+        # Process video for scenes
+        scenes, frame_paths = scene_detector.process_video(file_path)
+        
+        # Create response with scene information
+        scene_info = [
+            SceneInfo(
+                start_time=start,
+                end_time=end,
+                frame_path=frame_path
+            )
+            for (start, end), frame_path in zip(scenes, frame_paths)
+        ]
+        
         return {
-            "message": "Video uploaded successfully",
+            "message": "Video processed successfully",
             "file_path": file_path,
+            "scenes": scene_info,
             "status": "success"
         }
     except Exception as e:
@@ -75,10 +95,23 @@ async def process_youtube_video(video_input: VideoInput):
         # Download video
         file_path = youtube_handler.download_video(video_input.youtube_url)
         
-        # TODO: Implement video processing logic
+        # Process video for scenes
+        scenes, frame_paths = scene_detector.process_video(file_path)
+        
+        # Create response with scene information
+        scene_info = [
+            SceneInfo(
+                start_time=start,
+                end_time=end,
+                frame_path=frame_path
+            )
+            for (start, end), frame_path in zip(scenes, frame_paths)
+        ]
+        
         return {
-            "message": "YouTube video downloaded successfully",
+            "message": "YouTube video processed successfully",
             "file_path": file_path,
+            "scenes": scene_info,
             "status": "success"
         }
     except Exception as e:
