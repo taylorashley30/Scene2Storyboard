@@ -1,0 +1,422 @@
+
+1
+Scene2Storyboard Implementation Guide
+Scene2Storyboard is a project that takes a video (via a YouTube URL or local upload), extracts key visual
+scenes, adds AI-generated captions, and compiles them into a comic strip-style storyboard. It showcases
+multimodal AI (vision + audio + text) in a local app, with an interactive front-end for demonstration. Below is
+a comprehensive step-by-step guide breaking down each component of the implementation.
+1. Tech Stack Overview
+A suitable tech stack for Scene2Storyboard includes a Python backend for AI processing and a React front-
+end for the user interface:
+Backend: Python with a web framework like FastAPI or Flask. FastAPI is a modern choice that
+provides asynchronous capabilities and automatic docs, while Flask is lightweight and simple – either
+works for a local demo. The backend will handle video processing (scene detection, audio
+transcription) and AI inference (image captioning, LLM caption refinement).
+Frontend: React (JavaScript/TypeScript). The front-end will provide an interface to upload a video file
+or enter a YouTube link, trigger the processing via API calls, and display the resulting storyboard.
+React is preferred for its component-based structure and ease of creating interactive UIs.
+Communication: Use RESTful HTTP endpoints (e.g. a POST endpoint to submit the video/URL and
+GET or WebSocket to retrieve results). The front-end can use  fetch  or Axios to call the backend
+API. For example, a POST  /process  endpoint can accept a video file (as form-data) or a JSON with
+a YouTube URL, and the response can provide the storyboard output (or a path to download it).
+Ensure CORS is enabled on the backend so the React app can communicate with it locally.
+Environment: The project will run locally on a single machine. A capable GPU is recommended for AI
+models (Whisper, BLIP, LLM), though smaller models can run on CPU (with slower performance). All
+libraries and models used are free and open-source, avoiding any paid APIs or proprietary services.
+High-level   architecture   of   the   Scene2Storyboard   system.   The   React   front-end   sends   video   input   to   the   Python
+backend API, which runs through scene detection, audio transcription (Whisper), image captioning (BLIP), and
+caption refinement (LLM) before returning a compiled storyboard.
+The diagram above shows how data flows: the user uploads a video or URL to the front-end, the backend
+processes it through various AI components, and finally the front-end displays the storyboard (with an
+option to download it).
+• 
+• 
+• 
+• 
+1
+2. Video Input Handling (Uploads & YouTube Download)
+The first step is accepting video input in both forms: local file upload and YouTube link:
+Frontend (React): Create a form with:
+a file input field (using an  <input type="file">  or a drag-and-drop area) for local videos.
+a text input for a YouTube URL.
+a submit button to trigger processing.
+Use React state to store the selected file or URL. You can allow the user to choose either method (if a
+URL is provided, ignore the file, and vice versa). Basic validation (like URL format or file type/size) is
+recommended.
+Backend (API):  Implement an endpoint (e.g. POST   /process ) to handle the input. If a file is
+uploaded, it will come in   request.files   (Flask) or as   UploadFile   in FastAPI. If a URL is
+provided, it will be in the JSON body or form data. The backend should detect which input is present:
+For a file: save it to a temporary location (or process in-memory if small) using libraries like 
+werkzeug  or FastAPI’s file handling.
+For a YouTube URL: use an open-source video downloader to fetch the video. For example, pytube
+or  youtube_dl/yt-dlp  can download YouTube videos given a link. Pytube is a lightweight Python
+library   that   makes   this   straightforward.   For   instance:
+YouTube('video_url').streams.first().download('save_path')  will download the video
+to a given path . Ensure to handle exceptions (e.g. invalid URL or network issues). 
+YouTube Parsing: You may allow the front-end to accept a full YouTube URL or just the video ID. The
+backend can parse out the video ID if needed. Using pytube: 
+from pytube import YouTube
+yt = YouTube("https://www.youtube.com/watch?v=VIDEO_ID")
+stream = yt.streams.get_highest_resolution() # or .first() for first 
+available  
+stream.download(output_path="/tmp", filename="input_video.mp4")
+This will download the video to a temp directory. (If pytube encounters issues due to YouTube
+changes, an alternative is to use  yt-dlp  via subprocess or its Python API.)
+File Handling: Once the video file is obtained (from upload or download), keep track of its file path
+for processing. Also, consider file size limits – processing very large videos will be slow, so you might
+enforce or warn about duration limits (e.g. a few minutes for demo purposes).
+By the end of this step, the backend should have a local video file path ( input_video.mp4 ) ready for
+scene detection.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+1
+• 
+• 
+2
+3. Scene Detection with OpenCV
+Next, we segment the video into key scenes (shots) – each scene change will correspond to a panel in the
+storyboard. We use OpenCV (cv2) to detect scene boundaries:
+Approach:  A   simple   method   is   to   detect  shot transitions  by   analyzing   differences   between
+consecutive frames. For example, compute the difference in color histograms or pixel intensities
+between frames – a large change indicates a scene cut. Another approach is using OpenCV’s
+background subtraction or motion detection to find when a new scene starts (as done in the
+PyImageSearch comic panel extractor, which captures a frame when motion has settled) . 
+Implementation (manual): Loop through video frames using OpenCV: 
+import cv2
+cap = cv2.VideoCapture('input_video.mp4')
+prev_hist = None
+scene_frames = []
+frame_index = 0
+while True:
+ret, frame = cap.read()
+if not ret: break # end of video
+# compute color histogram for this frame
+hist = cv2.calcHist([frame], channels=[0,1,2], mask=None, histSize=[16,
+16,16], ranges=[0,256]*3)
+cv2.normalize(hist, hist, 0, 1, cv2.NORM_MINMAX)
+if prev_hist is not None:
+diff = cv2.compareHist(prev_hist, hist, cv2.HISTCMP_CORREL)
+if diff < 0.5: # low correlation = scene change (threshold can be 
+tuned)
+scene_frames.append(frame_index)
+prev_hist = hist
+frame_index += 1
+cap.release()
+This code computes a histogram for each frame and compares it to the previous frame’s histogram.
+A correlation below a threshold (0.5 in this example) flags a scene transition, and we record that
+frame index as a scene boundary. (You might also record the first frame as start of scene 1.)
+Using PySceneDetect: Instead of writing our own, we can leverage PySceneDetect, an open-source
+library  built  on  OpenCV,  which  provides  easy  scene  detection  algorithms.  For  example,  using
+content-aware detection: 
+from scenedetect import detect, ContentDetector
+scene_list = detect('input_video.mp4', ContentDetector())
+• 
+2 3
+• 
+• 
+3
+This returns timecodes for each scene . PySceneDetect’s  ContentDetector  uses changes in
+frame content (similar to histogram differences) to identify cuts. We can then extract one
+representative frame per scene (e.g. the first frame of each scene or the midpoint).
+Selecting Key Frames:  Once scene boundaries are identified (either by our manual method or
+PySceneDetect), extract a representative frame for each scene. Using OpenCV, you can jump to a
+frame by index or timestamp and save it: 
+cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+ret, frame = cap.read()
+cv2.imwrite(f"scene_{i}.jpg", frame)
+Save these scene images to a folder or keep them in memory for captioning. The frames will serve as
+panels in the storyboard.
+Tuning: Depending on the video, you might need to adjust the sensitivity. Fast cuts can be detected
+with the content difference method. If the video has gradual transitions (fades), a simple threshold
+might miss them – PySceneDetect offers a  ThresholdDetector  for fades , but for simplicity,
+focusing on content differences is usually sufficient for a demonstrable project.
+After this step, you should have a list of image frames (key scenes) that represent the video’s story flow. For
+example, a 2-minute clip might yield, say, 8-12 scene frames.
+4. Audio Transcription with OpenAI Whisper
+With scenes identified, we also want to capture the audio context – specifically, the speech in each scene –
+using speech-to-text.  OpenAI Whisper  is an excellent choice: it’s a state-of-the-art, open-source ASR
+(Automatic Speech Recognition) model  that can run locally. 
+Extract Audio: First, get the audio from the video. You can use  ffmpeg  (which Whisper requires) to
+extract the audio track: 
+ffmpeg -i input_video.mp4 -ac 1 -ar 16000 audio.wav
+This extracts a mono audio at 16 kHz (common for speech tasks). Alternatively, Python libraries like 
+MoviePy can be used: 
+from moviepy.editor import VideoFileClip
+clip = VideoFileClip('input_video.mp4')
+clip.audio.write_audiofile('audio.wav', fps=16000, ffmpeg_params=["-ac",
+"1"])
+4
+• 
+• 
+5
+6
+• 
+4
+Whisper Setup: Install  openai-whisper  and ensure  ffmpeg  is installed (Whisper’s Python API
+uses ffmpeg under the hood ). Whisper provides multiple model sizes (tiny → large). For a local
+demo,  small or base models  might be a good trade-off between speed and accuracy. Load the
+model in Python: 
+import whisper
+model = whisper.load_model("small") # or "base", "medium", etc.
+The first time, this will download the model weights (open-source under MIT License ).
+Transcribe Audio: Run the transcription: 
+result = model.transcribe("audio.wav")
+text = result["text"]
+This returns the full transcript of the video . You can also get segments with timestamps
+(Whisper’s result includes  segments  with start/end times for each phrase). For our purposes, we
+might want the dialogue or narration in each scene. We can map the transcript to scenes by time:
+e.g., if scene 1 spans 0:00–0:15, take transcript lines in that range as scene 1 dialogue.
+Scene-wise Transcript: Use Whisper’s segmented output to associate text with each scene frame.
+One approach is:
+After Whisper transcription, for each scene’s start time (and maybe end time), concatenate all words
+from Whisper’s segments that fall into that time interval.
+This gives a rough subtitle for each scene. If no speech in a scene, it might be silent – then you rely
+on visual captioning alone.
+Whisper’s accuracy is high for English and it supports many languages. Because it’s open-sourced by
+OpenAI for developer use , running it locally poses no issue. This transcription will provide context that
+can make our captions more descriptive or faithful to the video’s content.
+5. Image Captioning for Key Scenes (Visual AI with BLIP/CLIP)
+Now we have still images for each scene and (optionally) the transcripts. The next step is to generate a
+caption for each scene image – describing what is visually happening. We will use a vision-language model
+for image captioning. Two strong open-source options are CLIP (by OpenAI) and BLIP (by Salesforce):
+CLIP: CLIP is actually an image-text similarity model, not a caption generator. It can tell how well a
+given text matches an image. While one could use CLIP to rank a set of candidate captions or to find
+which transcript sentence best matches the frame, CLIP alone won’t directly produce captions. We
+focus instead on BLIP.
+• 
+7
+8
+• 
+9
+• 
+• 
+• 
+10
+• 
+5
+BLIP/BLIP-2: BLIP (Bootstrapping Language-Image Pretraining) is designed for image captioning
+and VQA. BLIP-2, an improved version, connects a vision encoder with a language model . For
+simplicity, we can use the original BLIP model which has a pre-trained captioning capability available
+via Hugging Face. There’s a ready pipeline in Hugging Face Transformers for image-to-text: 
+from transformers import pipeline
+captioner = pipeline("image-to-text", model="Salesforce/blip-image-
+captioning-base")
+caption = captioner(image_path)[0]["generated_text"]
+This one-liner loads BLIP and generates a caption for an image . For example, it might produce “A
+group of people sitting around a table” for a given frame.
+BLIP is free and open-source, and using the HuggingFace pipeline will handle the model downloads. Note
+that BLIP-2 models are larger (often requiring a GPU). The base BLIP captioning model should run on CPU
+for a single image albeit slowly (but acceptable for a few scenes).
+Integrating Transcript Context: We can enhance captions by incorporating Whisper’s output. One
+idea: if a scene has relevant dialogue, combine it with the visual features. For example, if Whisper for
+scene 3 caught someone saying “Let’s head to the car” and BLIP’s raw caption is “Two people standing
+next to a car”, we could merge these to make a richer caption. This could be done in the next step
+(LLM refinement), by providing both the image description and the dialogue to the language model. 
+Batch processing: If many scenes, you might batch caption generation. The  pipeline  can take a
+list of images too. But be mindful of memory if using large models. For a demo with ~10 frames,
+looping over frames to generate captions is fine.
+After this step, for each scene frame we have: -  visual_caption  – a description of the scene from the
+image (e.g. “A man walking a dog in a park”). -  scene_dialogue  – the transcript of what was said during
+that scene (if any, e.g. “It's a lovely day for a walk.”).
+These will be fed into an LLM to create the final comic-style blurb.
+6. LLM Caption Enhancement (Open-Source Language Model)
+Raw captions from BLIP are factual and transcripts can be bland. We want short, punchy captions like a
+comic panel description or speech bubble text, possibly with a bit of humor or narrative flair. This is where a
+Large Language Model (LLM) comes in – to refine or rewrite captions in a more engaging style. Since we
+must use an open-source model (no OpenAI API), we consider lightweight local models such as Mistral 7B
+or TinyLlama 1.1B:
+Choosing a Model:  Mistral 7B is a 7.3B-parameter model released under Apache 2.0 (no usage
+restrictions)  that has shown strong performance comparable to larger models . TinyLlama is
+an even smaller 1.1B model that adopts Llama2 architecture and is optimized for low-resource
+environments  (good if running on CPU). Both are suitable for running locally using the Hugging
+• 
+11
+12
+• 
+• 
+• 
+13 14
+15
+6
+Face Transformers library. For better results, choose an instruction-tuned variant (so it responds
+well to prompts) – e.g., Mistral-7B-Instruct or TinyLlama-Chat.
+Setup: Load the model with Transformers. Ensure you have  torch  and enough RAM/GPU: 
+from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
+model_name = "mistralai/Mistral-7B-Instruct-v0.2" # for example
+tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=False)
+model = AutoModelForCausalLM.from_pretrained(model_name, device_map="auto")
+# load on GPU if available
+textgen = pipeline("text-generation", model=model, tokenizer=tokenizer)
+The first time, this will download the model weights (7B ~ a few GB). If using TinyLlama (1.1B), it’s
+much smaller. You might also load 4-bit quantized versions to save memory. (Both Mistral and
+TinyLlama are open-source; Mistral outperforms Llama2 13B on many tasks , and TinyLlama’s
+compact size makes it ideal for limited compute .)
+Crafting Prompts: We will prompt the LLM to create the final caption. One strategy per scene:
+Provide the BLIP caption and the Whisper transcript (if available) as context.
+Instruct the LLM to produce a concise, witty or dramatic line suitable for a comic panel.
+For example, prompt template: 
+You are a creative storyteller. 
+Describe the scene in a fun comic book style.
+Scene: A man walking a dog in a park.
+Dialogue: "It's a lovely day for a walk."
+Comic-style caption:
+We expect an output like: “On a sunny afternoon, John and his pup enjoy their stroll – blissfully unaware of
+what’s coming next.” (or even a speech bubble style line). If the scene has spoken dialogue, we might use it
+directly as a quote in a speech bubble caption.
+Refinement vs. Generation: We have two sources of truth: visual description and actual dialogue.
+Depending on the use-case, you could:
+Narrative caption: Have the LLM combine them into a third-person narration (as in the example
+above).
+Speech text: If you want it to appear like character speech, the LLM can punch-up the dialogue or
+make it more comic-like. For instance, if the transcript was “We should hurry.”, the LLM could output
+“We better pick up the pace – time’s running out!”.
+• 
+14
+16
+• 
+• 
+• 
+• 
+• 
+• 
+7
+Processing each scene: Iterate through each scene: 
+final_captions = []
+for i, scene in enumerate(scenes):
+prompt = generate_prompt(image_caption[i], scene_transcript[i])
+result = textgen(prompt, max_new_tokens=50, do_sample=True,
+temperature=0.7)
+caption_text = result[0]['generated_text'].strip().split("Comic-style 
+caption:")[-1]
+final_captions.append(caption_text)
+Here  generate_prompt  inserts the image caption and transcript into the prompt template. We
+use the pipeline to generate text, limiting to a reasonable length. We then extract the generated
+caption text (assuming the model follows the prompt format).
+Quality control: Since these models run locally, you may need to experiment with prompt wording
+to get the desired style. Mistral and TinyLlama should handle simple prompts well. If the output is
+too verbose or not in style, adjust the prompt or use a lower  max_new_tokens . You can also set a
+random seed or use deterministic decoding if you want reproducible results.
+After this, we have a final caption for each scene frame. These captions are hopefully more engaging than
+a raw description – suitable to display under each storyboard panel.
+7. Storyboard Generation (Combining Frames and Captions)
+With frames and their captions ready, the final step is to lay them out in a comic strip format. There are a
+couple of ways to do this, depending on how you want to present the result:
+Option A: Generate a single image (server-side) – e.g. a grid image where each cell has the scene
+picture with its caption underneath. We can use Python’s Pillow (PIL) library to do this:
+Determine the grid layout: for example, 3 columns and N rows (where N = total scenes / 3, rounded
+up) to make a compact board. Alternatively, for a linear storyboard, one could do a single row strip
+(but that can be hard to visualize if too many panels).
+Resize all scene images to a uniform size (e.g. width 320px, height 180px for a 16:9 thumbnail).
+Consistent sizing makes the grid neat.
+Create a new blank canvas with a white background using  Image.new() , sized to fit the grid. For a
+3xN grid of 320x180 images plus space for captions, you might choose each panel area to be
+320x(180+TextHeight). (Text height can be ~50 pixels or you can allocate, say, 1/4 of the panel for
+caption text.)
+Paste each scene image onto the canvas at the appropriate (x,y) offset. Then draw the caption text
+below it. You can use  ImageDraw.text  for drawing text. Make sure to wrap or truncate text if it’s
+too long to fit.
+Draw borders if desired: a thin black border around each panel can give a comic look. This can be
+done by drawing rectangles or simply leaving spacing between images and filling that gap with a
+line.
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+• 
+8
+For example, using Pillow (rough sketch): 
+from PIL import Image, ImageDraw, ImageFont
+cols = 3
+rows = math.ceil(len(scenes)/cols)
+thumb_w, thumb_h = 320, 180
+panel_w, panel_h = thumb_w, thumb_h + 40 # extra for caption
+board = Image.new("RGB", (panel_w*cols, panel_h*rows), color=(255,255,255))
+draw = ImageDraw.Draw(board)
+font = ImageFont.load_default()
+for idx, (img_path, caption) in enumerate(zip(scene_images, final_captions)):
+img = Image.open(img_path).resize((thumb_w, thumb_h))
+row, col = divmod(idx, cols)
+x = col * panel_w; y = row * panel_h
+board.paste(img, (x, y))
+# caption text
+draw.text((x+5, y+thumb_h+5), caption, fill=(0,0,0), font=font)
+board.save("storyboard.jpg")
+This will produce something like a multi-panel image. (In a real implementation, you’d use a nicer font and
+maybe wrap text lines.) Pillow allows composition easily by pasting and drawing .
+Option B: Assemble on Frontend – Instead of creating one image, you can send the individual
+frames and captions to the React front-end and let it display them in a grid layout (using CSS Grid or
+Flexbox). Each panel can be an  <figure>  with an  <img>  and a  <figcaption> . This approach is
+more flexible for responsive design and easier text styling. React can then offer a “Download” button
+that triggers downloading of the combined image or even a PDF:
+You could use a library like html2canvas in the browser to render the React component to an image
+for download.
+Or the backend can offer an endpoint to download a PDF where it arranges panels (maybe using a
+PDF library like ReportLab, but that’s extra complexity). 
+For a portfolio project, Option A (server-side composition) is simpler to implement and ensures the
+storyboard is fixed as intended. The output can be a single image file (JPEG/PNG) that the user can right-
+click to save or download via a provided link.
+Regardless of method, the output should look like a comic page: multiple panels (scenes) in sequence with
+captions. This final compiled result is then sent to the front-end. If it’s a single image, the backend can
+respond with the image file (or a URL path to it). If the front-end is assembling it, the backend can just send
+JSON: e.g. an array of  {image: "data:image/png;base64,...", caption: "..."}  or perhaps serve
+the images separately.
+17
+• 
+• 
+• 
+9
+8. Frontend Features and User Experience
+On the front-end, we design the UI/UX to make using the app straightforward:
+Upload/URL Input: The React app’s main page can have a card or section for input:
+A file uploader (using an  <input>  or a drag-drop zone). When a file is selected, you might show
+the file name and maybe a video preview thumbnail (using the video element or canvas to capture a
+frame).
+A text field for YouTube URL with a “Submit” button. You could also use react-hook-form or similar
+to manage inputs, and allow either field but not both at once.
+A submit action – when clicked, disable inputs and call the backend. Provide user feedback:
+Show a loading spinner or message (“Processing... this may take up to a minute”).
+If possible, show progress for sub-steps (not trivial unless backend is sending updates). At
+least a spinner is fine.
+Display Output: Once the backend responds, show the storyboard:
+If we got an image file URL, simply render an  <img src="...">  with appropriate styling (maybe
+scaled down to fit the screen, but allow zoom).
+If we got structured data (frames + captions), render a grid of components. For example: 
+<div className="grid">
+{panels.map((panel, i) => (
+<figure key={i} className="panel">
+<img src={panel.image} alt={`Scene ${i+1}`} />
+<figcaption>{panel.caption}</figcaption>
+</figure>
+))}
+</div>
+And corresponding CSS to make  .grid  a flex or grid container (e.g.  display: grid; grid-
+template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1em; ). Ensure
+captions have a background or contrast color if overlaid on images (if you choose to overlay instead
+of below).
+Download Option: Include a Download Storyboard button. If it’s a single image, the button can
+simply   be   an   <a   href="storyboard.jpg"   download>Download   Storyboard</a>   (if   the
+image is accessible via a static URL or blob). If the front-end rendered it, you might use a library to
+convert the DOM to image. Another lightweight trick: if the panels are images and text, you could
+create a canvas and draw the images/text on it (similar to what we did with PIL) using JS, then allow
+downloading that canvas as an image. However, given time, server-side assembly might be easier.
+Styling and Extras: Since this is for a portfolio, making it visually appealing helps:
+• 
+• 
+• 
+• 
+◦ 
+◦ 
+• 
+• 
+• 
+• 
+• 
+10
