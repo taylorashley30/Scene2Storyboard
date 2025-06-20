@@ -24,6 +24,11 @@ class SceneDetector:
         session_id = f"{timestamp}_{safe_name}_{os.urandom(4).hex()}"
         session_path = os.path.join(self.scenes_dir, session_id)
         os.makedirs(session_path, exist_ok=True)
+        
+        # Create subdirectories for better organization
+        scenes_folder = os.path.join(session_path, "scenes")
+        os.makedirs(scenes_folder, exist_ok=True)
+        
         return session_path
     
     def save_metadata(self, metadata: dict, session_path: str):
@@ -98,7 +103,7 @@ class SceneDetector:
                 scene_list_raw = [(FrameTimecode(0, fps), FrameTimecode(frame_count, fps))]
 
             # Save middle frame for each scene
-            images_path = os.path.join(session_path)
+            images_path = os.path.join(session_path, "scenes")
             save_images(
                 scene_list=scene_list_raw,
                 video=video_manager,

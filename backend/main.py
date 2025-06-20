@@ -9,8 +9,8 @@ from pydantic import BaseModel
 from utils.file_handler import FileHandler
 from utils.youtube_handler import YouTubeHandler
 from utils.scene_detector import SceneDetector
-from utils.frame_extractor import FrameExtractor
 from utils.audio_transcriber import AudioTranscriber
+from utils.image_captioner import ImageCaptioner
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -38,8 +38,8 @@ os.makedirs(SCENES_DIR, exist_ok=True)
 file_handler = FileHandler(upload_dir=UPLOADS_DIR)
 youtube_handler = YouTubeHandler(download_dir=UPLOADS_DIR)
 scene_detector = SceneDetector(scenes_dir=SCENES_DIR)
-frame_extractor = FrameExtractor()
 audio_transcriber = AudioTranscriber(model_size="base")  # Using base model for faster processing
+image_captioner = ImageCaptioner()
 
 # Models
 class VideoInput(BaseModel):
@@ -92,6 +92,11 @@ async def process_video_upload(
         # Add transcripts to scene metadata
         for scene, transcript in zip(scene_metadata["scenes"], scene_transcripts):
             scene["transcript"] = transcript
+            # Generate image caption for each scene frame
+            try:
+                scene["caption"] = image_captioner.caption_image(scene["frame_path"])
+            except Exception as e:
+                scene["caption"] = f"[Captioning failed: {e}]"
 
         # Re-save the metadata with the updated video path and transcript info
         scene_detector.save_metadata(scene_metadata, session_path)
@@ -145,6 +150,11 @@ async def process_youtube_video(
         # Add transcripts to scene metadata
         for scene, transcript in zip(scene_metadata["scenes"], scene_transcripts):
             scene["transcript"] = transcript
+            # Generate image caption for each scene frame
+            try:
+                scene["caption"] = image_captioner.caption_image(scene["frame_path"])
+            except Exception as e:
+                scene["caption"] = f"[Captioning failed: {e}]"
 
         # Re-save the metadata with the updated video path and transcript info
         scene_detector.save_metadata(scene_metadata, session_path)

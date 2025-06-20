@@ -1,0 +1,19 @@
+{
+    "video_path": "scenes/20250620_114613_3559e8b8-dcbe-48b5-a_07d4eb8a/3559e8b8-dcbe-48b5-a123-2ba9d0bc51c9.mp4",
+    "video_name": "3559e8b8-dcbe-48b5-a123-2ba9d0bc51c9",
+    "session_path": "scenes/20250620_114613_3559e8b8-dcbe-48b5-a_07d4eb8a",
+    "total_scenes": 1,
+    "scenes": [
+        {
+            "scene_number": 1,
+            "start_time": 0.0,
+            "end_time": 18.933333333333334,
+            "duration": 18.933333333333334,
+            "frame_path": "scenes/20250620_114613_3559e8b8-dcbe-48b5-a_07d4eb8a/scenes/scene_001.jpg",
+            "frame_filename": "scene_001.jpg",
+            "transcript": " Alright so here we are one of the elephants.  The cool thing about these guys is that they have really, really, really long hunts.  And that's cool.  And that's pretty much all there is to say.",
+            "caption": "a young man standing in front of an elephant enclosure"
+        }
+    ],
+    "processing_timestamp": "2025-06-20T11:46:13.743173"
+}
