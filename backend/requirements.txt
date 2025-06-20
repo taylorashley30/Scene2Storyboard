@@ -3,11 +3,12 @@ uvicorn==0.27.1
 python-multipart==0.0.9
 opencv-python==4.9.0.80
 numpy==1.26.4
-Pillow==10.2.0
-pytube==15.0.0
+Pillow>=10.0.0
+yt-dlp>=2023.0.0
 openai-whisper==20231117
 torch==2.2.0
 transformers==4.37.2
 scenedetect==0.6.3
 moviepy==1.0.3
-python-dotenv==1.0.1 
+python-dotenv==1.0.1
+requests>=2.25.0 

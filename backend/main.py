@@ -3,11 +3,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uvicorn
 import os
-from typing import Optional, List, Tuple
+import shutil
+from typing import Optional
 from pydantic import BaseModel
 from utils.file_handler import FileHandler
 from utils.youtube_handler import YouTubeHandler
-from processors.scene_detector import SceneDetector
+from utils.scene_detector import SceneDetector
+from utils.frame_extractor import FrameExtractor
+from utils.audio_transcriber import AudioTranscriber
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -25,23 +28,26 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Create uploads directory if it doesn't exist
+# Define and create base directories
 UPLOADS_DIR = "uploads"
+SCENES_DIR = "scenes"
 os.makedirs(UPLOADS_DIR, exist_ok=True)
+os.makedirs(SCENES_DIR, exist_ok=True)
 
 # Initialize handlers
-file_handler = FileHandler()
-youtube_handler = YouTubeHandler()
-scene_detector = SceneDetector()
+file_handler = FileHandler(upload_dir=UPLOADS_DIR)
+youtube_handler = YouTubeHandler(download_dir=UPLOADS_DIR)
+scene_detector = SceneDetector(scenes_dir=SCENES_DIR)
+frame_extractor = FrameExtractor()
+audio_transcriber = AudioTranscriber(model_size="base")  # Using base model for faster processing
 
 # Models
 class VideoInput(BaseModel):
     youtube_url: Optional[str] = None
 
-class SceneInfo(BaseModel):
-    start_time: float
-    end_time: float
-    frame_path: str
+class SceneDetectionRequest(BaseModel):
+    use_pyscenedetect: bool = True
+    video_name: Optional[str] = None
 
 # Health check endpoint
 @app.get("/health")
@@ -50,32 +56,50 @@ async def health_check():
 
 # Video processing endpoint for file upload
 @app.post("/process/upload")
-async def process_video_upload(file: UploadFile = File(...)):
+async def process_video_upload(
+    file: UploadFile = File(...),
+    use_pyscenedetect: bool = Form(True),
+    video_name: Optional[str] = Form(None)
+):
     try:
         # Validate file
         if not file_handler.is_valid_video_file(file.filename):
             raise HTTPException(status_code=400, detail="Invalid video file format")
 
-        # Save file
-        file_path = await file_handler.save_upload_file(file)
+        # Save file to a temporary location
+        temp_video_path = await file_handler.save_upload_file(file)
         
-        # Process video for scenes
-        scenes, frame_paths = scene_detector.process_video(file_path)
+        # Process video for scene detection, which creates the session folder
+        scene_metadata = scene_detector.process_video(
+            video_path=temp_video_path,
+            video_name=video_name or file.filename,
+            use_pyscenedetect=use_pyscenedetect
+        )
+        session_path = scene_metadata["session_path"]
         
-        # Create response with scene information
-        scene_info = [
-            SceneInfo(
-                start_time=start,
-                end_time=end,
-                frame_path=frame_path
-            )
-            for (start, end), frame_path in zip(scenes, frame_paths)
-        ]
+        # Move the video file into its session folder
+        final_video_filename = os.path.basename(temp_video_path)
+        final_video_path = os.path.join(session_path, final_video_filename)
+        shutil.move(temp_video_path, final_video_path)
+        
+        # Update metadata with the new, final path
+        scene_metadata["video_path"] = final_video_path
+        
+        # Get scene transcripts using the final video path
+        scene_timestamps = [(scene["start_time"], scene["end_time"]) for scene in scene_metadata["scenes"]]
+        scene_transcripts = audio_transcriber.get_scene_transcripts(final_video_path, scene_timestamps)
+        
+        # Add transcripts to scene metadata
+        for scene, transcript in zip(scene_metadata["scenes"], scene_transcripts):
+            scene["transcript"] = transcript
+
+        # Re-save the metadata with the updated video path and transcript info
+        scene_detector.save_metadata(scene_metadata, session_path)
         
         return {
             "message": "Video processed successfully",
-            "file_path": file_path,
-            "scenes": scene_info,
+            "session_path": session_path,
+            "scene_metadata": scene_metadata,
             "status": "success"
         }
     except Exception as e:
@@ -83,7 +107,10 @@ async def process_video_upload(file: UploadFile = File(...)):
 
 # Video processing endpoint for YouTube URL
 @app.post("/process/youtube")
-async def process_youtube_video(video_input: VideoInput):
+async def process_youtube_video(
+    video_input: VideoInput,
+    scene_request: SceneDetectionRequest = SceneDetectionRequest()
+):
     try:
         if not video_input.youtube_url:
             raise HTTPException(status_code=400, detail="YouTube URL is required")
@@ -92,28 +119,96 @@ async def process_youtube_video(video_input: VideoInput):
         if not youtube_handler.is_valid_youtube_url(video_input.youtube_url):
             raise HTTPException(status_code=400, detail="Invalid YouTube URL")
 
-        # Download video
-        file_path = youtube_handler.download_video(video_input.youtube_url)
+        # Download video to a temporary location
+        temp_video_path = youtube_handler.download_video(video_input.youtube_url)
         
-        # Process video for scenes
-        scenes, frame_paths = scene_detector.process_video(file_path)
+        # Process video for scene detection, which creates the session folder
+        scene_metadata = scene_detector.process_video(
+            video_path=temp_video_path,
+            video_name=scene_request.video_name,
+            use_pyscenedetect=scene_request.use_pyscenedetect
+        )
+        session_path = scene_metadata["session_path"]
+
+        # Move the video file into its session folder
+        final_video_filename = os.path.basename(temp_video_path)
+        final_video_path = os.path.join(session_path, final_video_filename)
+        shutil.move(temp_video_path, final_video_path)
+
+        # Update metadata with the new, final path
+        scene_metadata["video_path"] = final_video_path
         
-        # Create response with scene information
-        scene_info = [
-            SceneInfo(
-                start_time=start,
-                end_time=end,
-                frame_path=frame_path
-            )
-            for (start, end), frame_path in zip(scenes, frame_paths)
-        ]
+        # Get scene transcripts using the final video path
+        scene_timestamps = [(scene["start_time"], scene["end_time"]) for scene in scene_metadata["scenes"]]
+        scene_transcripts = audio_transcriber.get_scene_transcripts(final_video_path, scene_timestamps)
+        
+        # Add transcripts to scene metadata
+        for scene, transcript in zip(scene_metadata["scenes"], scene_transcripts):
+            scene["transcript"] = transcript
+
+        # Re-save the metadata with the updated video path and transcript info
+        scene_detector.save_metadata(scene_metadata, session_path)
         
         return {
             "message": "YouTube video processed successfully",
-            "file_path": file_path,
-            "scenes": scene_info,
+            "session_path": session_path,
+            "scene_metadata": scene_metadata,
             "status": "success"
         }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Get scene information endpoint
+@app.get("/scenes/{session_id}")
+async def get_scene_info(session_id: str):
+    """Get information about scenes from a specific processing session"""
+    try:
+        # Look for the session folder
+        session_path = os.path.join(SCENES_DIR, session_id)
+        
+        if not os.path.exists(session_path) or not os.path.isdir(session_path):
+            raise HTTPException(status_code=404, detail="Session not found")
+        
+        # Read metadata
+        metadata_path = os.path.join(session_path, "metadata.json")
+        if not os.path.exists(metadata_path):
+            raise HTTPException(status_code=404, detail="Session metadata not found")
+        
+        import json
+        with open(metadata_path, 'r') as f:
+            metadata = json.load(f)
+        
+        return metadata
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# List all processing sessions
+@app.get("/sessions")
+async def list_sessions():
+    """List all video processing sessions"""
+    try:
+        if not os.path.exists(SCENES_DIR):
+            return {"sessions": []}
+        
+        sessions = []
+        for folder in os.listdir(SCENES_DIR):
+            folder_path = os.path.join(SCENES_DIR, folder)
+            if os.path.isdir(folder_path):
+                metadata_path = os.path.join(folder_path, "metadata.json")
+                if os.path.exists(metadata_path):
+                    import json
+                    with open(metadata_path, 'r') as f:
+                        metadata = json.load(f)
+                    
+                    sessions.append({
+                        "session_id": folder,
+                        "video_name": metadata.get("video_name", "Unknown"),
+                        "total_scenes": metadata.get("total_scenes", 0),
+                        "processing_timestamp": metadata.get("processing_timestamp", ""),
+                        "session_path": folder_path
+                    })
+        
+        return {"sessions": sessions}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

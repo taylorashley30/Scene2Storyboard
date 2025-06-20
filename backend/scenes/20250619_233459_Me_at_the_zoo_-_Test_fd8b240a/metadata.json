@@ -1,0 +1,18 @@
+{
+    "video_path": "scenes/20250619_233459_Me_at_the_zoo_-_Test_fd8b240a/56e8693b-5bba-44fa-bda0-df1b7c440e90.mp4",
+    "video_name": "Me at the zoo - Test",
+    "session_path": "scenes/20250619_233459_Me_at_the_zoo_-_Test_fd8b240a",
+    "total_scenes": 1,
+    "scenes": [
+        {
+            "scene_number": 1,
+            "start_time": 0.0,
+            "end_time": 18.933333333333334,
+            "duration": 18.933333333333334,
+            "frame_path": "scenes/20250619_233459_Me_at_the_zoo_-_Test_fd8b240a/scene_001.jpg",
+            "frame_filename": "scene_001.jpg",
+            "transcript": " Alright so here we are one of the elephants.  The cool thing about these guys is that they have really, really, really long hunts.  And that's cool.  And that's pretty much all there is to say."
+        }
+    ],
+    "processing_timestamp": "2025-06-19T23:34:59.999851"
+}
