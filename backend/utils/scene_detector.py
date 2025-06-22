@@ -26,7 +26,7 @@ class SceneDetector:
         os.makedirs(session_path, exist_ok=True)
         
         # Create subdirectories for better organization
-        scenes_folder = os.path.join(session_path, "scenes")
+        scenes_folder = os.path.join(session_path, "snippets")
         os.makedirs(scenes_folder, exist_ok=True)
         
         return session_path
@@ -103,7 +103,7 @@ class SceneDetector:
                 scene_list_raw = [(FrameTimecode(0, fps), FrameTimecode(frame_count, fps))]
 
             # Save middle frame for each scene
-            images_path = os.path.join(session_path, "scenes")
+            images_path = os.path.join(session_path, "snippets")
             save_images(
                 scene_list=scene_list_raw,
                 video=video_manager,

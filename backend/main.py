@@ -11,6 +11,7 @@ from utils.youtube_handler import YouTubeHandler
 from utils.scene_detector import SceneDetector
 from utils.audio_transcriber import AudioTranscriber
 from utils.image_captioner import ImageCaptioner
+from utils.caption_enhancer import CaptionEnhancer
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -38,8 +39,9 @@ os.makedirs(SCENES_DIR, exist_ok=True)
 file_handler = FileHandler(upload_dir=UPLOADS_DIR)
 youtube_handler = YouTubeHandler(download_dir=UPLOADS_DIR)
 scene_detector = SceneDetector(scenes_dir=SCENES_DIR)
-audio_transcriber = AudioTranscriber(model_size="base")  # Using base model for faster processing
+audio_transcriber = AudioTranscriber(model_size="medium")  # Using medium model for better accuracy
 image_captioner = ImageCaptioner()
+caption_enhancer = CaptionEnhancer()  # LLM caption enhancement
 
 # Models
 class VideoInput(BaseModel):
@@ -98,6 +100,14 @@ async def process_video_upload(
             except Exception as e:
                 scene["caption"] = f"[Captioning failed: {e}]"
 
+        # Enhance captions using LLM
+        try:
+            enhanced_scenes = caption_enhancer.enhance_scene_captions(scene_metadata["scenes"])
+            scene_metadata["scenes"] = enhanced_scenes
+        except Exception as e:
+            print(f"Caption enhancement failed: {e}")
+            # Continue without enhancement if it fails
+
         # Re-save the metadata with the updated video path and transcript info
         scene_detector.save_metadata(scene_metadata, session_path)
         
@@ -155,6 +165,14 @@ async def process_youtube_video(
                 scene["caption"] = image_captioner.caption_image(scene["frame_path"])
             except Exception as e:
                 scene["caption"] = f"[Captioning failed: {e}]"
+
+        # Enhance captions using LLM
+        try:
+            enhanced_scenes = caption_enhancer.enhance_scene_captions(scene_metadata["scenes"])
+            scene_metadata["scenes"] = enhanced_scenes
+        except Exception as e:
+            print(f"Caption enhancement failed: {e}")
+            # Continue without enhancement if it fails
 
         # Re-save the metadata with the updated video path and transcript info
         scene_detector.save_metadata(scene_metadata, session_path)
