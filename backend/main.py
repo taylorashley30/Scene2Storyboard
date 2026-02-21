@@ -18,6 +18,7 @@ from typing import Optional
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
+from fastapi import Query
 from pydantic import BaseModel
 
 # Import utility modules
@@ -58,6 +59,12 @@ storyboard_generator = StoryboardGenerator()
 # Pydantic models
 class VideoInput(BaseModel):
     youtube_url: Optional[str] = None
+
+class ProcessYoutubeRequest(BaseModel):
+    """Single body for /process/youtube - flat structure for simpler frontend requests."""
+    youtube_url: Optional[str] = None
+    use_pyscenedetect: bool = True
+    video_name: Optional[str] = None
 
 class SceneDetectionRequest(BaseModel):
     use_pyscenedetect: bool = True
@@ -145,28 +152,34 @@ async def process_video_upload(
 
 # Video processing endpoint for YouTube URL
 @app.post("/process/youtube")
-async def process_youtube_video(
-    video_input: VideoInput,
-    scene_request: SceneDetectionRequest = SceneDetectionRequest()
-):
+async def process_youtube_video(req: ProcessYoutubeRequest):
     try:
-        if not video_input.youtube_url:
+        if not req.youtube_url:
             raise HTTPException(status_code=400, detail="Video URL is required (YouTube or Instagram)")
 
         # Validate video URL (YouTube or Instagram)
-        if not youtube_handler.is_valid_video_url(video_input.youtube_url):
+        if not youtube_handler.is_valid_video_url(req.youtube_url):
             raise HTTPException(status_code=400, detail="Invalid video URL. Supported: YouTube (watch, shorts, youtu.be) or Instagram (posts, reels)")
+
+        # Get video title for nicer UX (fallback to req.video_name or None)
+        video_name = req.video_name
+        if not video_name:
+            try:
+                info = youtube_handler.get_video_info(req.youtube_url)
+                video_name = (info.get("title") or "Video").strip()[:80]  # Sanitize and truncate
+            except Exception:
+                video_name = None
 
         # Download video to a temporary location
         print("[Pipeline] Downloading video...")
-        temp_video_path = youtube_handler.download_video(video_input.youtube_url)
+        temp_video_path = youtube_handler.download_video(req.youtube_url)
         print("[Pipeline] Download done. Detecting scenes...")
 
         # Process video for scene detection, which creates the session folder
         scene_metadata = scene_detector.process_video(
             video_path=temp_video_path,
-            video_name=scene_request.video_name,
-            use_pyscenedetect=scene_request.use_pyscenedetect
+            video_name=video_name,
+            use_pyscenedetect=req.use_pyscenedetect
         )
         session_path = scene_metadata["session_path"]
 
@@ -292,6 +305,68 @@ async def get_storyboard(session_id: str):
         return FileResponse(storyboard_path, media_type="image/jpeg")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Export storyboard as PNG, JPEG, or PDF
+@app.get("/storyboard/{session_id}/export")
+async def export_storyboard(
+    session_id: str,
+    format: str = Query("png", description="Export format: png, jpeg, or pdf")
+):
+    """Export the storyboard image as PNG, JPEG, or PDF"""
+    try:
+        session_path = os.path.join(SCENES_DIR, session_id)
+        if not os.path.exists(session_path) or not os.path.isdir(session_path):
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        storyboard_jpg = os.path.join(session_path, "storyboard.jpg")
+        if not os.path.exists(storyboard_jpg):
+            raise HTTPException(status_code=404, detail="Storyboard not found")
+
+        fmt = format.lower().strip()
+        filename = f"storyboard.{fmt}"
+
+        if fmt == "jpeg" or fmt == "jpg":
+            return FileResponse(
+                storyboard_jpg,
+                media_type="image/jpeg",
+                filename=filename,
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+            )
+
+        if fmt == "png":
+            from PIL import Image
+            import io
+            img = Image.open(storyboard_jpg)
+            if img.mode in ("RGBA", "P"):
+                img = img.convert("RGB")
+            buf = io.BytesIO()
+            img.save(buf, "PNG")
+            buf.seek(0)
+            from fastapi.responses import Response
+            return Response(
+                content=buf.getvalue(),
+                media_type="image/png",
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+            )
+
+        if fmt == "pdf":
+            import img2pdf
+            with open(storyboard_jpg, "rb") as f:
+                pdf_bytes = img2pdf.convert(f)
+            from fastapi.responses import Response
+            return Response(
+                content=pdf_bytes,
+                media_type="application/pdf",
+                headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+            )
+
+        raise HTTPException(status_code=400, detail="Invalid format. Use png, jpeg, or pdf")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # Serve individual scene frame endpoint
 @app.get("/frame/{session_id}/{frame_filename}")

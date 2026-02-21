@@ -34,6 +34,10 @@ yarn-error.log*
 .DS_Store
 
 # Project specific
+PITCH_AND_USE_CASES.md
+PRODUCT_REQUIREMENTS_DOCUMENT.md
+PROJECT_PROGRESS_SUMMARY.md
+PROJECT_STRUCTURE.md
 *.mp4
 *.wav
 *.jpg

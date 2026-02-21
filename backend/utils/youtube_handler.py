@@ -55,7 +55,7 @@ class YouTubeHandler:
             ydl_opts = {
                 'quiet': True,
                 'no_warnings': True,
-                'extract_flat': True,
+                'skip_download': True,
             }
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:

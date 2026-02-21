@@ -1,35 +1,51 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+import { useState } from 'react';
+import { VideoInput } from './components/VideoInput';
+import { BentoGrid } from './components/BentoGrid';
+import { ExportControls } from './components/ExportControls';
+import './App.css';
 
 function App() {
-  const [count, setCount] = useState(0)
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.tsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
-  )
+    <div className="app">
+      <header className="app-header">
+        <h1>Scene2Storyboard</h1>
+        <p>Turn videos into comic-style storyboards</p>
+      </header>
+
+      {!sessionId ? (
+        <main className="app-main">
+          <VideoInput
+            onSuccess={(id) => {
+              setSessionId(id);
+              setError(null);
+            }}
+            onError={setError}
+          />
+          {error && <div className="app-error">{error}</div>}
+        </main>
+      ) : (
+        <main className="app-main app-main-storyboard">
+          <div className="app-storyboard-actions">
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => {
+                setSessionId(null);
+                setError(null);
+              }}
+            >
+              New video
+            </button>
+            <ExportControls sessionId={sessionId} />
+          </div>
+          <BentoGrid sessionId={sessionId} />
+        </main>
+      )}
+    </div>
+  );
 }
 
-export default App
+export default App;

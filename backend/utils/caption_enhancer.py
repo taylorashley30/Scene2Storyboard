@@ -37,6 +37,22 @@ class CaptionEnhancer:
             os.environ.get("GEMINI_BATCH_DELAY", "2.0")
         )
     
+    def _deduplicate_repeated_words(self, text: str) -> str:
+        """
+        Collapse consecutive repeated words (e.g. 'minecraft minecraft minecraft' -> 'minecraft').
+        BLIP can sometimes produce repetitive output; this cleans it up.
+        """
+        if not text or not text.strip():
+            return text
+        words = text.split()
+        if len(words) < 2:
+            return text
+        result = [words[0]]
+        for w in words[1:]:
+            if w.lower() != result[-1].lower():
+                result.append(w)
+        return " ".join(result)
+
     def _clean_transcript(self, transcript: str) -> str:
         """
         Clean up transcript text for better readability
@@ -91,8 +107,8 @@ class CaptionEnhancer:
         # Clean the transcript
         clean_transcript = self._clean_transcript(transcript)
         
-        # Clean the visual caption
-        clean_visual = visual_caption.strip()
+        # Clean the visual caption (deduplicate repeated words from BLIP)
+        clean_visual = self._deduplicate_repeated_words(visual_caption.strip())
         if clean_visual:
             # Capitalize first letter
             clean_visual = clean_visual[0].upper() + clean_visual[1:]
@@ -181,7 +197,7 @@ class CaptionEnhancer:
                 scene_descriptions = []
                 for scene in batch_scenes:
                     num = scene.get("scene_number", start_idx + len(scene_descriptions) + 1)
-                    visual = (scene.get("caption") or "").strip()
+                    visual = self._deduplicate_repeated_words((scene.get("caption") or "").strip())
                     transcript = (scene.get("transcript") or "").strip()
                     scene_descriptions.append(
                         f"Scene {num}:\n"

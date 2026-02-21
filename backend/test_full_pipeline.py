@@ -24,13 +24,9 @@ def test_youtube_pipeline():
     
     # Prepare the request
     payload = {
-        "video_input": {
-            "youtube_url": youtube_url
-        },
-        "scene_request": {
-            "use_pyscenedetect": True,
-            "video_name": "youtube_demo"
-        }
+        "youtube_url": youtube_url,
+        "use_pyscenedetect": True,
+        "video_name": "youtube_demo"
     }
     
     try:
