@@ -2,7 +2,7 @@ import cv2
 import os
 import uuid
 from datetime import datetime
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional
 import numpy as np
 from scenedetect import detect, ContentDetector, SceneManager, VideoManager
 from scenedetect.video_manager import VideoManager
@@ -11,8 +11,19 @@ from scenedetect.detectors import ContentDetector
 from scenedetect.scene_manager import save_images
 import json
 
+
 class SceneDetector:
-    def __init__(self, scenes_dir="scenes"):
+    def __init__(self, scenes_dir: Optional[str] = None):
+        """
+        scenes_dir:
+            Directory where per-video session folders will be created.
+            If not provided, defaults to a 'scenes' folder next to this file.
+        """
+        if scenes_dir is None:
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            # backend/utils -> backend
+            scenes_dir = os.path.normpath(os.path.join(base_dir, "..", "scenes"))
+
         self.scenes_dir = scenes_dir
         os.makedirs(self.scenes_dir, exist_ok=True)
     
@@ -80,12 +91,24 @@ class SceneDetector:
         cap.release()
         return scene_frames
     
-    def _detect_scenes_pyscenedetect(self, video_path: str, session_path: str) -> List[Dict]:
-        """Detects scenes using PySceneDetect and saves a representative frame for each."""
+    def _detect_scenes_pyscenedetect(self, video_path: str, session_path: str, 
+                                    min_scene_duration: float = 1.5,
+                                    threshold: float = 30.0) -> List[Dict]:
+        """
+        Detects scenes using PySceneDetect and saves a representative frame for each.
+        
+        Args:
+            video_path: Path to video file
+            session_path: Path to session folder
+            min_scene_duration: Minimum scene duration in seconds (default 1.5s).
+                                Scenes shorter than this are merged with the previous scene.
+            threshold: ContentDetector threshold (default 30.0). Higher = less sensitive (fewer cuts).
+        """
         try:
             video_manager = VideoManager([video_path])
             scene_manager = SceneManager()
-            scene_manager.add_detector(ContentDetector())
+            # ContentDetector with configurable threshold (higher = less sensitive)
+            scene_manager.add_detector(ContentDetector(threshold=threshold))
             video_manager.set_downscale_factor()
             video_manager.start()
             scene_manager.detect_scenes(frame_source=video_manager)
@@ -112,18 +135,32 @@ class SceneDetector:
                 image_name_template='scene_$SCENE_NUMBER'
             )
 
-            scene_data = []
+            # Filter and merge scenes shorter than min_scene_duration
+            filtered_scenes = []
             for i, scene in enumerate(scene_list_raw):
                 start_time = scene[0].get_seconds()
                 end_time = scene[1].get_seconds()
-                frame_filename = f"scene_{i+1:03d}.jpg"
+                duration = end_time - start_time
+                
+                # If scene is too short, merge with previous scene (if exists)
+                if duration < min_scene_duration and filtered_scenes:
+                    # Merge with previous scene
+                    prev_scene = filtered_scenes[-1]
+                    prev_scene["end_time"] = end_time
+                    prev_scene["duration"] = end_time - prev_scene["start_time"]
+                    # Keep the frame from the first scene in the merge (already set)
+                    continue
+                
+                # Use original scene index (i+1) to find frame file saved by PySceneDetect
+                original_scene_num = i + 1
+                frame_filename = f"scene_{original_scene_num:03d}.jpg"
                 frame_path = os.path.join(images_path, frame_filename)
                 
                 # PySceneDetect might save with a different number format
                 # e.g. scene_001.jpg vs scene_1.jpg. Check for existence
                 if not os.path.exists(frame_path):
                     # Try alternate name format from save_images
-                    alt_frame_filename = f"scene_{i+1}.jpg"
+                    alt_frame_filename = f"scene_{original_scene_num}.jpg"
                     alt_frame_path = os.path.join(images_path, alt_frame_filename)
                     if os.path.exists(alt_frame_path):
                         frame_path = alt_frame_path
@@ -132,17 +169,17 @@ class SceneDetector:
                         # As a fallback, skip if image not found
                         continue
                 
-                scene_data.append({
-                    "scene_number": i + 1,
+                filtered_scenes.append({
+                    "scene_number": len(filtered_scenes) + 1,  # Sequential numbering after filtering
                     "start_time": start_time,
                     "end_time": end_time,
-                    "duration": end_time - start_time,
+                    "duration": duration,
                     "frame_path": frame_path,
                     "frame_filename": frame_filename
                 })
             
             video_manager.release()
-            return scene_data
+            return filtered_scenes
 
         except Exception as e:
             print(f"Error during PySceneDetect processing: {e}")
@@ -179,17 +216,34 @@ class SceneDetector:
         
         return timestamps
     
-    def process_video(self, video_path: str, video_name: str, use_pyscenedetect: bool = True):
+    def process_video(self, video_path: str, video_name: str, use_pyscenedetect: bool = True,
+                     min_scene_duration: Optional[float] = None,
+                     scene_threshold: Optional[float] = None):
         """
         Processes a video to detect scenes and extract representative frames.
+        
+        Args:
+            video_path: Path to video file
+            video_name: Name for the video session
+            use_pyscenedetect: Use PySceneDetect (currently always True)
+            min_scene_duration: Minimum scene duration in seconds (default from env or 1.5s).
+                                Scenes shorter than this are merged with previous scene.
+            scene_threshold: ContentDetector threshold (default from env or 30.0).
+                            Higher = less sensitive (fewer cuts detected).
         """
         if not video_name:
             video_name = os.path.splitext(os.path.basename(video_path))[0]
 
         session_path = self._create_session_folder(video_name)
         
+        # Get config from env or use defaults
+        min_duration = min_scene_duration or float(os.environ.get("S2S_MIN_SCENE_DURATION", "1.5"))
+        threshold = scene_threshold or float(os.environ.get("S2S_SCENE_THRESHOLD", "30.0"))
+        
         # We are simplifying to only use PySceneDetect as it's more robust
-        scenes = self._detect_scenes_pyscenedetect(video_path, session_path)
+        scenes = self._detect_scenes_pyscenedetect(video_path, session_path, 
+                                                  min_scene_duration=min_duration,
+                                                  threshold=threshold)
         
         metadata = {
             "video_path": video_path, # This will be updated in main.py after move

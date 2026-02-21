@@ -14,26 +14,33 @@ def test_youtube_pipeline():
     print("=" * 50)
     
     # Test with a short YouTube video
-    youtube_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"  # Rick Roll - short video
+    # youtube_url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"  # Me at the zoo (short)
+    # youtube_url = "https://youtube.com/shorts/UpoNocNEeEs?si=MeGAGUqOdpfegWyo"  # Austin Mollno (shorts)
+    youtube_url = "https://www.youtube.com/shorts/JHLuN3K8QfY"  # fullstack peter
+    
+    
     
     print(f"Processing YouTube video: {youtube_url}")
     
     # Prepare the request
     payload = {
-        "youtube_url": youtube_url,
+        "video_input": {
+            "youtube_url": youtube_url
+        },
         "scene_request": {
             "use_pyscenedetect": True,
-            "threshold": 30.0
+            "video_name": "youtube_demo"
         }
     }
     
     try:
         # Send the request
         print("Sending request to /process/youtube...")
+        print("(Pipeline can take 5–10+ min on CPU; waiting up to 15 min...)")
         response = requests.post(
             "http://localhost:8000/process/youtube",
             json=payload,
-            timeout=300  # 5 minutes timeout
+            timeout=900  # 15 minutes — Whisper + BLIP on CPU can exceed 5 min
         )
         
         if response.status_code == 200:

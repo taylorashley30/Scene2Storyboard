@@ -21,7 +21,6 @@ class ImageCaptioner:
         self.model_name = model_name
         self.processor = None
         self.model = None
-        self._load_model()
     
     def _load_model(self):
         """Load the BLIP model and processor"""
@@ -52,6 +51,10 @@ class ImageCaptioner:
             str: Generated caption for the image
         """
         try:
+            # Lazily load BLIP so the API server can start instantly.
+            if self.processor is None or self.model is None:
+                self._load_model()
+
             if not os.path.exists(image_path):
                 raise FileNotFoundError(f"Image file not found: {image_path}")
             

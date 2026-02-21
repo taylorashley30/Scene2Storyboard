@@ -7,7 +7,7 @@ import requests
 from urllib.parse import quote
 
 class AudioTranscriber:
-    def __init__(self, model_size: str = "large-v2"):
+    def __init__(self, model_size: Optional[str] = None):
         """
         Initialize the AudioTranscriber with a Whisper model.
         
@@ -15,7 +15,16 @@ class AudioTranscriber:
             model_size (str): Size of the Whisper model to use. Options: "tiny", "base", "small", "medium", "large", "large-v2"
                              Using "large-v2" for better accuracy with regular speech
         """
-        self.model = whisper.load_model(model_size)
+        # Lazily load Whisper so the API server can start instantly.
+        # Default to a higher‑quality model for short videos.
+        # You can override with env var S2S_WHISPER_MODEL_SIZE.
+        self.model_size = model_size or os.environ.get("S2S_WHISPER_MODEL_SIZE", "large-v2")
+        self.model = None
+
+    def _ensure_model_loaded(self) -> None:
+        if self.model is None:
+            print(f"Loading Whisper model: {self.model_size}")
+            self.model = whisper.load_model(self.model_size)
     
     def extract_audio(self, video_path: str, output_path: Optional[str] = None) -> str:
         """
@@ -50,6 +59,8 @@ class AudioTranscriber:
         Returns:
             Dict: Transcription result containing text and segments
         """
+        self._ensure_model_loaded()
+
         # Use better parameters for regular speech transcription
         result = self.model.transcribe(
             audio_path,
@@ -307,16 +318,20 @@ class AudioTranscriber:
         if song_info and song_info.get('title'):
             lyrics = self.search_lyrics(song_info['title'], song_info.get('artist', ''))
         
-        # Map segments to scenes
+        # Map segments to scenes using segment start time (more precise than overlap)
+        # This avoids assigning the same segment to multiple scenes when scenes are short
         scene_transcripts = []
         for start_time, end_time in scene_timestamps:
             scene_text = []
             for segment in result["segments"]:
                 seg_start = segment["start"]
                 seg_end = segment["end"]
+                seg_midpoint = (seg_start + seg_end) / 2
                 
-                # If segment overlaps with scene
-                if (seg_start <= end_time and seg_end >= start_time):
+                # Assign segment to scene if:
+                # 1. Segment starts within the scene, OR
+                # 2. Segment midpoint falls within the scene (for segments that span scene boundaries)
+                if (start_time <= seg_start < end_time) or (start_time <= seg_midpoint <= end_time):
                     scene_text.append(segment["text"])
             
             # Combine and clean the transcript

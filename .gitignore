@@ -5,6 +5,7 @@ __pycache__/
 *.so
 .Python
 backend/venv/
+backend/.venv/
 *.egg
 *.egg-info/
 dist/
@@ -39,3 +40,5 @@ yarn-error.log*
 *.png
 temp/
 uploads/ 
+scenes/
+backend/scenes/

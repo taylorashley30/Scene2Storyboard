@@ -27,8 +27,27 @@ class YouTubeHandler:
             return filename
 
     def is_valid_youtube_url(self, url: str) -> bool:
-        """Check if the URL is a valid YouTube URL."""
-        return "youtube.com/watch?v=" in url or "youtu.be/" in url
+        """Check if the URL is a valid YouTube URL (regular videos, Shorts, or short links)."""
+        return (
+            "youtube.com/watch?v=" in url or
+            "youtube.com/shorts/" in url or
+            "youtu.be/" in url
+        )
+
+    def is_valid_instagram_url(self, url: str) -> bool:
+        """Check if the URL is a valid Instagram URL (posts, reels, or TV)."""
+        if "instagram.com" not in url:
+            return False
+        return (
+            "/p/" in url or
+            "/reel/" in url or
+            "/reels/" in url or
+            "/tv/" in url
+        )
+
+    def is_valid_video_url(self, url: str) -> bool:
+        """Check if the URL is a valid video URL (YouTube or Instagram)."""
+        return self.is_valid_youtube_url(url) or self.is_valid_instagram_url(url)
     
     def get_video_info(self, url: str) -> dict:
         """Get video information without downloading"""

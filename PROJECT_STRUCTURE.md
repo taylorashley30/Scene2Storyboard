@@ -28,7 +28,7 @@ The backend is responsible for all video processing and AI tasks.
 - `utils/`: A package containing various utility modules for the backend.
   - `__init__.py`: Makes the `utils` directory a Python package.
   - `file_handler.py`: Contains the `FileHandler` class for managing file uploads and validation.
-  - `youtube_handler.py`: Contains the `YouTubeHandler` class for downloading videos from YouTube using yt-dlp.
+  - `youtube_handler.py`: Contains the `YouTubeHandler` class for downloading videos from YouTube or Instagram using yt-dlp.
   - `scene_detector.py`: Contains the `SceneDetector` class, which uses `PySceneDetect` to find scene boundaries and extract frames.
   - `frame_extractor.py`: A utility for extracting metadata and frames from video files (some functionality may overlap or be used by `SceneDetector`).
   - `audio_transcriber.py`: Contains the `AudioTranscriber` class, which uses OpenAI's `Whisper` model to transcribe audio from video files.

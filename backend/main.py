@@ -5,6 +5,14 @@ Main FastAPI application for video processing and storyboard generation
 """
 
 import os
+from pathlib import Path
+
+# Load .env from backend directory so GEMINI_API_KEY, S2S_WHISPER_MODEL_SIZE, etc. are set
+_env_path = Path(__file__).resolve().parent / ".env"
+if _env_path.exists():
+    from dotenv import load_dotenv
+    load_dotenv(_env_path)
+
 import shutil
 from typing import Optional
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
@@ -21,6 +29,11 @@ from utils.image_captioner import ImageCaptioner
 from utils.caption_enhancer import CaptionEnhancer
 from utils.storyboard_generator import StoryboardGenerator
 
+# Base paths (independent of where the server is started from)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SCENES_DIR = os.path.join(BASE_DIR, "scenes")
+os.makedirs(SCENES_DIR, exist_ok=True)
+
 # Initialize FastAPI app
 app = FastAPI(title="Scene2Storyboard API", version="1.0.0")
 
@@ -36,15 +49,11 @@ app.add_middleware(
 # Initialize utility classes
 file_handler = FileHandler()
 youtube_handler = YouTubeHandler()
-scene_detector = SceneDetector()
+scene_detector = SceneDetector(scenes_dir=SCENES_DIR)
 audio_transcriber = AudioTranscriber()
 image_captioner = ImageCaptioner()
 caption_enhancer = CaptionEnhancer()
 storyboard_generator = StoryboardGenerator()
-
-# Configuration
-SCENES_DIR = "scenes"
-os.makedirs(SCENES_DIR, exist_ok=True)
 
 # Pydantic models
 class VideoInput(BaseModel):
@@ -103,7 +112,7 @@ async def process_video_upload(
             except Exception as e:
                 scene["caption"] = f"[Captioning failed: {e}]"
 
-        # Enhance captions using LLM
+        # Enhance captions (optional LLM when OPENAI_API_KEY is set, else rule-based)
         try:
             enhanced_scenes = caption_enhancer.enhance_scene_captions(scene_metadata["scenes"])
             scene_metadata["scenes"] = enhanced_scenes
@@ -142,15 +151,17 @@ async def process_youtube_video(
 ):
     try:
         if not video_input.youtube_url:
-            raise HTTPException(status_code=400, detail="YouTube URL is required")
+            raise HTTPException(status_code=400, detail="Video URL is required (YouTube or Instagram)")
 
-        # Validate YouTube URL
-        if not youtube_handler.is_valid_youtube_url(video_input.youtube_url):
-            raise HTTPException(status_code=400, detail="Invalid YouTube URL")
+        # Validate video URL (YouTube or Instagram)
+        if not youtube_handler.is_valid_video_url(video_input.youtube_url):
+            raise HTTPException(status_code=400, detail="Invalid video URL. Supported: YouTube (watch, shorts, youtu.be) or Instagram (posts, reels)")
 
         # Download video to a temporary location
+        print("[Pipeline] Downloading video...")
         temp_video_path = youtube_handler.download_video(video_input.youtube_url)
-        
+        print("[Pipeline] Download done. Detecting scenes...")
+
         # Process video for scene detection, which creates the session folder
         scene_metadata = scene_detector.process_video(
             video_path=temp_video_path,
@@ -166,11 +177,13 @@ async def process_youtube_video(
 
         # Update metadata with the new, final path
         scene_metadata["video_path"] = final_video_path
-        
+
         # Get scene transcripts using the final video path
+        print("[Pipeline] Transcribing audio (Whisper — this can take 1–2+ min)...")
         scene_timestamps = [(scene["start_time"], scene["end_time"]) for scene in scene_metadata["scenes"]]
         scene_transcripts = audio_transcriber.get_scene_transcripts(final_video_path, scene_timestamps)
-        
+        print("[Pipeline] Transcription done. Captioning images (BLIP)...")
+
         # Add transcripts to scene metadata
         for scene, transcript in zip(scene_metadata["scenes"], scene_transcripts):
             scene["transcript"] = transcript
@@ -180,7 +193,8 @@ async def process_youtube_video(
             except Exception as e:
                 scene["caption"] = f"[Captioning failed: {e}]"
 
-        # Enhance captions using LLM
+        # Enhance captions (Gemini when GEMINI_API_KEY is set, else rule-based)
+        print("[Pipeline] Enhancing captions (Gemini or rule-based)...")
         try:
             enhanced_scenes = caption_enhancer.enhance_scene_captions(scene_metadata["scenes"])
             scene_metadata["scenes"] = enhanced_scenes
@@ -189,9 +203,10 @@ async def process_youtube_video(
             # Continue without enhancement if it fails
 
         # Generate storyboard
+        print("[Pipeline] Generating storyboard image...")
         try:
             storyboard_path = storyboard_generator.generate_storyboard(
-                scene_metadata["scenes"], 
+                scene_metadata["scenes"],
                 os.path.join(session_path, "storyboard.jpg")
             )
             scene_metadata["storyboard_path"] = storyboard_path
@@ -201,9 +216,10 @@ async def process_youtube_video(
 
         # Re-save the metadata with the updated video path and transcript info
         scene_detector.save_metadata(scene_metadata, session_path)
-        
+        print("[Pipeline] Done. Sending response.")
+
         return {
-            "message": "YouTube video processed successfully",
+            "message": "Video processed successfully",
             "session_path": session_path,
             "scene_metadata": scene_metadata,
             "status": "success"

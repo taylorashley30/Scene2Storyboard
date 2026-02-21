@@ -16,7 +16,8 @@ class StoryboardGenerator:
         """Initialize the storyboard generator"""
         self.default_font_size = 16
         self.panel_padding = 10
-        self.caption_height = 60
+        # Extra space so multi-line captions don't get cut off.
+        self.caption_height = 90
         self.border_width = 2
         
     def _load_font(self, size: int = None) -> ImageFont.FreeTypeFont:
@@ -193,21 +194,28 @@ class StoryboardGenerator:
         num_scenes = len(scenes_data)
         cols, rows, panel_width, panel_height = self._calculate_layout(num_scenes, max_width)
         
-        # Calculate storyboard dimensions
+        # Calculate storyboard width
         storyboard_width = cols * panel_width + (cols + 1) * self.panel_padding
-        storyboard_height = rows * panel_height + (rows + 1) * self.panel_padding
+
+        # Title area (reserve enough vertical space so it never gets cropped)
+        title_font = self._load_font(24)
+        title = f"Storyboard - {num_scenes} Scenes"
+        title_bbox = title_font.getbbox(title)
+        title_height = title_bbox[3] - title_bbox[1]
+        title_area_height = title_height + 2 * self.panel_padding
+
+        # Calculate storyboard height including title area
+        storyboard_height = title_area_height + rows * panel_height + (rows + 1) * self.panel_padding
         
         # Create storyboard canvas
         storyboard = Image.new('RGB', (storyboard_width, storyboard_height), color='white')
         
         # Add title
         draw = ImageDraw.Draw(storyboard)
-        title_font = self._load_font(24)
-        title = f"Storyboard - {num_scenes} Scenes"
-        title_bbox = title_font.getbbox(title)
         title_width = title_bbox[2] - title_bbox[0]
         title_x = (storyboard_width - title_width) // 2
-        draw.text((title_x, self.panel_padding), title, fill='black', font=title_font)
+        title_y = (title_area_height - title_height) // 2
+        draw.text((title_x, title_y), title, fill='black', font=title_font)
         
         # Create and place panels
         for i, scene in enumerate(scenes_data):
@@ -216,7 +224,7 @@ class StoryboardGenerator:
             
             # Calculate panel position
             x = col * panel_width + (col + 1) * self.panel_padding
-            y = row * panel_height + (row + 1) * self.panel_padding + 40  # Extra space for title
+            y = title_area_height + row * panel_height + (row + 1) * self.panel_padding
             
             # Get scene data
             frame_path = scene.get('frame_path', '')

@@ -170,13 +170,8 @@ if __name__ == "__main__":
     
     if success:
         print("\n✅ All tests passed! Storyboard generation is working correctly.")
-        
-        # Ask if user wants to keep test files
-        response = input("\nKeep test files? (y/n): ").lower().strip()
-        if response != 'y':
-            cleanup_test_files()
-        else:
-            print("Test files kept for inspection.")
+        # Automatically clean up generated test files to keep the repo tidy.
+        cleanup_test_files()
     else:
         print("\n❌ Some tests failed. Check the output above for details.")
         cleanup_test_files() 
