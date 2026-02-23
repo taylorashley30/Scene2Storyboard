@@ -453,6 +453,15 @@ async def export_storyboard(
             )
 
         if fmt == "pdf":
+            vid_name = "storyboard"
+            try:
+                import json
+                with open(os.path.join(session_path, "metadata.json")) as f:
+                    vid_name = json.load(f).get("video_name", "storyboard") or "storyboard"
+            except Exception:
+                pass
+            safe_name = re.sub(r'[^\w\-]', '_', str(vid_name))[:80]
+            filename = f"{safe_name}_storyboard.pdf"
             # Prefer multi-page PDF when available (longer videos)
             if os.path.exists(storyboard_pdf):
                 return FileResponse(
