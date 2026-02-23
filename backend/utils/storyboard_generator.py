@@ -9,16 +9,23 @@ from typing import List, Dict, Tuple, Optional
 from PIL import Image, ImageDraw, ImageFont
 import json
 
+from utils.panel_expander import expand_scenes_to_panels, assign_distinct_frames_to_panels, deduplicate_panel_captions
+
 class StoryboardGenerator:
     """Class for generating comic-strip style storyboards from scene data"""
-    
+
+    # Max panels per page to keep each page at a viewable size (e.g. 12 = 3 rows × 4 cols)
+    DEFAULT_MAX_PANELS_PER_PAGE = 12
+
     def __init__(self):
         """Initialize the storyboard generator"""
         self.default_font_size = 16
         self.panel_padding = 10
-        # Extra space so multi-line captions don't get cut off.
-        self.caption_height = 90
+        # Extra space so multi-line captions don't get cut off (~6-7 lines at 16pt).
+        self.caption_height = 150
         self.border_width = 2
+        self._last_pdf_path: Optional[str] = None
+        self._last_page_paths: List[str] = []
         
     def _load_font(self, size: int = None) -> ImageFont.FreeTypeFont:
         """
@@ -174,71 +181,147 @@ class StoryboardGenerator:
         
         return panel
     
-    def generate_storyboard(self, scenes_data: List[Dict], output_path: str, 
-                          max_width: int = 1200) -> str:
-        """
-        Generate a comic-strip style storyboard from scene data
-        
-        Args:
-            scenes_data (List[Dict]): List of scene dictionaries with frame_path and enhanced_caption
-            output_path (str): Path to save the generated storyboard
-            max_width (int): Maximum width of the storyboard
-            
-        Returns:
-            str: Path to the generated storyboard image
-        """
-        if not scenes_data:
-            raise ValueError("No scenes provided for storyboard generation")
-        
-        # Calculate layout
-        num_scenes = len(scenes_data)
-        cols, rows, panel_width, panel_height = self._calculate_layout(num_scenes, max_width)
-        
-        # Calculate storyboard width
+    def _create_storyboard_page(
+        self,
+        panels_data: List[Dict],
+        page_num: int,
+        total_pages: int,
+        total_panels: int,
+        max_width: int,
+        story_arc_summary: Optional[str] = None,
+    ) -> Image.Image:
+        """Create a single page of the storyboard."""
+        num_on_page = len(panels_data)
+        cols, rows, panel_width, panel_height = self._calculate_layout(num_on_page, max_width)
         storyboard_width = cols * panel_width + (cols + 1) * self.panel_padding
 
-        # Title area (reserve enough vertical space so it never gets cropped)
         title_font = self._load_font(24)
-        title = f"Storyboard - {num_scenes} Scenes"
+        title = f"Storyboard - {total_panels} Scenes"
+        if total_pages > 1:
+            title += f" (Page {page_num}/{total_pages})"
         title_bbox = title_font.getbbox(title)
         title_height = title_bbox[3] - title_bbox[1]
         title_area_height = title_height + 2 * self.panel_padding
 
-        # Calculate storyboard height including title area
+        if story_arc_summary and story_arc_summary.strip():
+            subtitle_font = self._load_font(16)
+            subtitle_lines = self._wrap_text(
+                story_arc_summary.strip(),
+                subtitle_font,
+                storyboard_width - 2 * self.panel_padding,
+            )
+            line_height = subtitle_font.getbbox("Ay")[3]
+            title_area_height += len(subtitle_lines) * line_height + self.panel_padding
+
         storyboard_height = title_area_height + rows * panel_height + (rows + 1) * self.panel_padding
-        
-        # Create storyboard canvas
         storyboard = Image.new('RGB', (storyboard_width, storyboard_height), color='white')
-        
-        # Add title
         draw = ImageDraw.Draw(storyboard)
+
         title_width = title_bbox[2] - title_bbox[0]
         title_x = (storyboard_width - title_width) // 2
-        title_y = (title_area_height - title_height) // 2
+        title_y = self.panel_padding
         draw.text((title_x, title_y), title, fill='black', font=title_font)
-        
-        # Create and place panels
-        for i, scene in enumerate(scenes_data):
+
+        if story_arc_summary and story_arc_summary.strip():
+            subtitle_font = self._load_font(16)
+            subtitle_lines = self._wrap_text(
+                story_arc_summary.strip(),
+                subtitle_font,
+                storyboard_width - 2 * self.panel_padding,
+            )
+            line_height = subtitle_font.getbbox("Ay")[3]
+            subtitle_y = title_y + title_height + self.panel_padding // 2
+            for line in subtitle_lines:
+                line_bbox = subtitle_font.getbbox(line)
+                line_width = line_bbox[2] - line_bbox[0]
+                line_x = (storyboard_width - line_width) // 2
+                draw.text((line_x, subtitle_y), line, fill='gray', font=subtitle_font)
+                subtitle_y += line_height
+
+        for i, scene in enumerate(panels_data):
             row = i // cols
             col = i % cols
-            
-            # Calculate panel position
             x = col * panel_width + (col + 1) * self.panel_padding
             y = title_area_height + row * panel_height + (row + 1) * self.panel_padding
-            
-            # Get scene data
             frame_path = scene.get('frame_path', '')
             caption = scene.get('enhanced_caption', f"Scene {scene.get('scene_number', i+1)}")
-            
-            # Create panel
-            panel = self._create_panel(frame_path, caption, panel_width, panel_height)
-            
-            # Paste panel onto storyboard
-            storyboard.paste(panel, (x, y))
-        
-        # Save storyboard
-        storyboard.save(output_path, 'JPEG', quality=95)
-        
+            panel_img = self._create_panel(frame_path, caption, panel_width, panel_height)
+            storyboard.paste(panel_img, (x, y))
+
+        return storyboard
+
+    def generate_storyboard(
+        self,
+        scenes_data: List[Dict],
+        output_path: str,
+        max_width: int = 1200,
+        story_arc_summary: Optional[str] = None,
+        max_panels_per_page: Optional[int] = None,
+    ) -> str:
+        """
+        Generate a comic-strip style storyboard from scene data.
+        For long videos, splits into multiple pages and produces a multi-page PDF.
+
+        Args:
+            scenes_data (List[Dict]): List of scene dicts with frame_path and enhanced_caption
+            output_path (str): Base path (e.g. storyboard.jpg) - page 1 is saved here
+            max_width (int): Maximum width per page
+            story_arc_summary (Optional[str]): Optional subtitle (e.g. video title)
+            max_panels_per_page (Optional[int]): Max panels per page (default 12). When exceeded, creates multiple pages.
+
+        Returns:
+            str: Path to the primary storyboard image (page 1)
+        """
+        if not scenes_data:
+            raise ValueError("No scenes provided for storyboard generation")
+
+        max_per_page = max_panels_per_page or self.DEFAULT_MAX_PANELS_PER_PAGE
+        total_panels = len(scenes_data)
+        session_dir = os.path.dirname(output_path)
+        base_name = os.path.splitext(os.path.basename(output_path))[0]
+
+        # Split panels into pages
+        page_chunks: List[List[Dict]] = []
+        for i in range(0, total_panels, max_per_page):
+            page_chunks.append(scenes_data[i : i + max_per_page])
+        total_pages = len(page_chunks)
+
+        page_paths: List[str] = []
+        for p, chunk in enumerate(page_chunks):
+            page_num = p + 1
+            page_img = self._create_storyboard_page(
+                chunk, page_num, total_pages, total_panels, max_width, story_arc_summary
+            )
+            if total_pages > 1:
+                page_path = os.path.join(session_dir, f"{base_name}_page_{page_num}.jpg")
+            else:
+                page_path = output_path
+            page_img.save(page_path, 'JPEG', quality=95)
+            page_paths.append(page_path)
+
+        # Backward compat: storyboard.jpg always points to first page
+        if total_pages > 1:
+            import shutil
+            shutil.copy(page_paths[0], output_path)
+
+        # Create multi-page PDF when there are multiple pages
+        if total_pages > 1:
+            try:
+                import img2pdf
+                pdf_path = os.path.join(session_dir, f"{base_name}.pdf")
+                with open(pdf_path, "wb") as pdf_file:
+                    pdf_file.write(img2pdf.convert(page_paths))
+                # Store PDF path in metadata via return - caller can persist
+                self._last_pdf_path = pdf_path
+                self._last_page_paths = page_paths
+            except Exception as e:
+                print(f"[Storyboard] Multi-page PDF creation failed: {e}")
+                self._last_pdf_path = None
+                self._last_page_paths = page_paths
+        else:
+            self._last_pdf_path = None
+            self._last_page_paths = [output_path]
+
         return output_path
     
     def generate_storyboard_from_session(self, session_path: str, output_filename: str = "storyboard.jpg") -> str:
@@ -260,11 +343,24 @@ class StoryboardGenerator:
         with open(metadata_path, 'r') as f:
             metadata = json.load(f)
         
-        # Get scenes data
+        # Get scenes data and optional story arc (video name)
         scenes_data = metadata.get('scenes', [])
         if not scenes_data:
             raise ValueError("No scenes found in metadata")
+        story_arc_summary = metadata.get('video_name') or metadata.get('story_arc_summary')
+
+        # Expand long captions into panels (same as pipeline)
+        panels_data = expand_scenes_to_panels(scenes_data, max_caption_chars=180)
+        panels_data = deduplicate_panel_captions(panels_data)
+        # When panels share a scene, extract distinct frames at evenly spaced timestamps
+        video_path = metadata.get("video_path")
+        if video_path and os.path.exists(video_path):
+            panels_data = assign_distinct_frames_to_panels(
+                panels_data, video_path, session_path
+            )
         
         # Generate storyboard
         output_path = os.path.join(session_path, output_filename)
-        return self.generate_storyboard(scenes_data, output_path) 
+        return self.generate_storyboard(
+            panels_data, output_path, story_arc_summary=story_arc_summary
+        ) 

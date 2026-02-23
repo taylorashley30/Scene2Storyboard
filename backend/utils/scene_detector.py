@@ -240,18 +240,31 @@ class SceneDetector:
         min_duration = min_scene_duration or float(os.environ.get("S2S_MIN_SCENE_DURATION", "1.5"))
         threshold = scene_threshold or float(os.environ.get("S2S_SCENE_THRESHOLD", "30.0"))
         
+        # Get video dimensions for aspect-ratio-aware display (landscape vs portrait/shorts)
+        video_width = 1920
+        video_height = 1080
+        try:
+            cap = cv2.VideoCapture(video_path)
+            video_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 1920)
+            video_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 1080)
+            cap.release()
+        except Exception:
+            pass
+        
         # We are simplifying to only use PySceneDetect as it's more robust
         scenes = self._detect_scenes_pyscenedetect(video_path, session_path, 
                                                   min_scene_duration=min_duration,
                                                   threshold=threshold)
         
         metadata = {
-            "video_path": video_path, # This will be updated in main.py after move
+            "video_path": video_path,  # This will be updated in main.py after move
             "video_name": video_name,
             "session_path": session_path,
             "total_scenes": len(scenes),
             "scenes": scenes,
-            "processing_timestamp": datetime.now().isoformat()
+            "processing_timestamp": datetime.now().isoformat(),
+            "video_width": video_width,
+            "video_height": video_height,
         }
         
         self.save_metadata(metadata, session_path)

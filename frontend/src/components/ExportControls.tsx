@@ -18,13 +18,12 @@ export function ExportControls({ sessionId }: ExportControlsProps) {
       const href = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = href;
-      a.download = `storyboard.${format}`;
+      a.download = format === 'pdf' ? 'storyboard.pdf' : 'storyboard_pages.zip';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(href);
     } catch {
-      // Fallback: open in new tab
       window.open(exportUrl(sessionId, format), '_blank');
     } finally {
       setExporting(null);
