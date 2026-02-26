@@ -5,6 +5,7 @@ Main FastAPI application for video processing and storyboard generation
 """
 
 import os
+import time
 from pathlib import Path
 
 # Load .env from backend directory so GEMINI_API_KEY, S2S_WHISPER_MODEL_SIZE, etc. are set
@@ -16,6 +17,7 @@ if _env_path.exists():
 import re
 import shutil
 from typing import Optional
+import cv2
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
@@ -36,6 +38,26 @@ from utils.storyboard_generator import StoryboardGenerator
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SCENES_DIR = os.path.join(BASE_DIR, "scenes")
 os.makedirs(SCENES_DIR, exist_ok=True)
+
+
+def get_video_duration_seconds(video_path: str) -> Optional[float]:
+    """Return video duration in seconds using OpenCV, or None if unavailable."""
+    if not video_path or not os.path.exists(video_path):
+        print(f"[Main] Video path not found for duration: {video_path}")
+        return None
+
+    cap = cv2.VideoCapture(video_path)
+    try:
+        fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+        frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0.0
+    finally:
+        cap.release()
+
+    if fps <= 0 or frame_count <= 0:
+        print(f"[Main] Could not determine FPS/frame count for: {video_path}")
+        return None
+
+    return float(frame_count / fps)
 
 # Initialize FastAPI app
 app = FastAPI(title="Scene2Storyboard API", version="1.0.0")
@@ -84,6 +106,7 @@ async def process_video_upload(
     use_pyscenedetect: bool = Form(True),
     video_name: Optional[str] = Form(None)
 ):
+    start_time = time.time()
     try:
         # Validate file
         if not file_handler.is_valid_video_file(file.filename):
@@ -107,6 +130,11 @@ async def process_video_upload(
         
         # Update metadata with the new, final path
         scene_metadata["video_path"] = final_video_path
+
+        # Compute and store video duration (seconds) for tracking
+        video_duration_seconds = get_video_duration_seconds(final_video_path)
+        if video_duration_seconds is not None:
+            scene_metadata["video_duration_seconds"] = video_duration_seconds
         
         # Get scene transcripts using the final video path
         scene_timestamps = [(scene["start_time"], scene["end_time"]) for scene in scene_metadata["scenes"]]
@@ -164,12 +192,17 @@ async def process_video_upload(
         scene_metadata["story_arc_summary"] = scene_metadata.get("video_name", "")
 
         # Re-save the metadata with the updated video path and transcript info
+        # and include timing metrics.
+        processing_time_seconds = time.time() - start_time
+        scene_metadata["processing_time_seconds"] = processing_time_seconds
         scene_detector.save_metadata(scene_metadata, session_path)
         
         return {
             "message": "Video processed successfully",
             "session_path": session_path,
             "scene_metadata": scene_metadata,
+            "processing_time_seconds": processing_time_seconds,
+            "video_duration_seconds": scene_metadata.get("video_duration_seconds"),
             "status": "success"
         }
     except Exception as e:
@@ -178,6 +211,7 @@ async def process_video_upload(
 # Video processing endpoint for YouTube URL
 @app.post("/process/youtube")
 async def process_youtube_video(req: ProcessYoutubeRequest):
+    start_time = time.time()
     try:
         if not req.youtube_url:
             raise HTTPException(status_code=400, detail="Video URL is required (YouTube or Instagram)")
@@ -217,6 +251,11 @@ async def process_youtube_video(req: ProcessYoutubeRequest):
 
         # Update metadata with the new, final path
         scene_metadata["video_path"] = final_video_path
+
+        # Compute and store video duration (seconds) for tracking
+        video_duration_seconds = get_video_duration_seconds(final_video_path)
+        if video_duration_seconds is not None:
+            scene_metadata["video_duration_seconds"] = video_duration_seconds
 
         # Get scene transcripts using the final video path
         print("[Pipeline] Transcribing audio (Whisper — this can take 1–2+ min)...")
@@ -280,13 +319,18 @@ async def process_youtube_video(req: ProcessYoutubeRequest):
         scene_metadata["story_arc_summary"] = scene_metadata.get("video_name", "")
 
         # Re-save the metadata with the updated video path and transcript info
+        # and include timing metrics.
+        processing_time_seconds = time.time() - start_time
+        scene_metadata["processing_time_seconds"] = processing_time_seconds
         scene_detector.save_metadata(scene_metadata, session_path)
-        print("[Pipeline] Done. Sending response.")
+        print(f"[Pipeline] Done. Total processing time: {processing_time_seconds:.2f} seconds.")
 
         return {
             "message": "Video processed successfully",
             "session_path": session_path,
             "scene_metadata": scene_metadata,
+            "processing_time_seconds": processing_time_seconds,
+            "video_duration_seconds": scene_metadata.get("video_duration_seconds"),
             "status": "success"
         }
     except Exception as e:

@@ -141,7 +141,20 @@ def _normalize_for_dedup(s: str) -> str:
     """Normalize text for duplicate comparison: lowercase, collapse whitespace."""
     if not s:
         return ""
-    return re.sub(r"\s+", " ", s.lower().strip())
+    # Strip trailing visual anchor after an em dash so that:
+    #   "Sentence text.\" — in a kitchen"
+    # and
+    #   "Sentence text.\""
+    # are treated as the same for dedup purposes.
+    base = s
+    # Split once on common dash patterns used before anchors.
+    parts = re.split(r"\s+[–—-]\s+", base, maxsplit=1)
+    if parts:
+        base = parts[0]
+    # Remove leading/trailing quotes which can vary slightly.
+    base = base.strip().strip('"\''"“”‘’")
+    # Lowercase and collapse whitespace.
+    return re.sub(r"\s+", " ", base.lower().strip())
 
 
 def deduplicate_panel_captions(panels_data: List[Dict]) -> List[Dict]:

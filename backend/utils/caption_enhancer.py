@@ -45,6 +45,11 @@ class CaptionEnhancer:
         self._use_web_context: bool = os.environ.get(
             "S2S_USE_WEB_CONTEXT", "false"
         ).lower() in ("true", "1", "yes")
+        # When true, Gemini is allowed to summarize/condense dialogue and drop filler,
+        # keeping only the key actions/ideas instead of preserving every word.
+        self._summarize_captions: bool = os.environ.get(
+            "S2S_SUMMARIZE_CAPTIONS", "false"
+        ).lower() in ("true", "1", "yes")
 
     def _deduplicate_repeated_words(self, text: str) -> str:
         """
@@ -350,22 +355,44 @@ class CaptionEnhancer:
             cooking_block = ""
             if self._is_cooking_video(video_context):
                 cooking_block = self._get_cooking_domain_instructions()
-            instructions = (
-                "You are a storyboard caption editor. Create captions that flow as a narrative.\n\n"
-                "CRITICAL - PRESERVE ORIGINAL CONTENT: Do NOT condense, summarize, or shorten the transcript. "
-                "Include ALL of the spoken content. Original content cannot be missed. Fix ASR errors (e.g. evything->everything) "
-                "and grammar only—keep every idea, example, and explanation. Long captions are fine; they will be split automatically.\n\n"
-                "When there IS dialogue: Format \"<Dialogue>\" — <short visual anchor>. "
-                "Put the FULL transcript in quotes. When the visual describes a character expression (e.g. mouth open) and the transcript is dialogue, "
-                "infer the ACTION (e.g. screaming, commanding) in the visual anchor, not the literal pose. "
-                "Example: transcript 'My soldiers push forward' + visual 'man with mouth open in sky' -> "
-                "\"My soldiers push forward!\" — a man fiercely shouting his command.\n\n"
-                "When there is NO dialogue (transcript is empty, None, or [no speech]): "
-                "Output ONLY a descriptive visual/action caption. NEVER include 'no speech', '[no speech]', or similar. "
-                "Use the full narrative context (video title, previous scenes) to infer what the scene shows. "
-                "The visual caption from BLIP may be wrong for chaotic/action shots—use narrative logic to correct it.\n\n"
-                "Output one line per scene in order, no extra text."
-            )
+
+            if self._summarize_captions:
+                # Compact / summarized captions: keep key actions & ideas, drop filler.
+                instructions = (
+                    "You are a storyboard caption editor. Create concise captions that still tell the story clearly.\n\n"
+                    "SUMMARIZE: Combine repetitive phrases and filler into a clearer, shorter narration. "
+                    "Remove filler words, side comments, jokes, and meta-commentary (e.g. talking about being tired, why a tool is used, "
+                    "or complaining about the process) unless they are important to understanding the action. "
+                    "Drop repeated exclamations like 'wow, wow, wow' after the first meaningful reaction.\n\n"
+                    "KEEP: important actions, decisions, and outcomes. For cooking/baking, keep the core steps, ingredient names, "
+                    "important quantities, temperatures, and timing if mentioned. It's OK to merge several spoken sentences into "
+                    "1–2 well-phrased sentences per caption.\n\n"
+                    "When there IS dialogue: Format \"<Dialogue>\" — <short visual anchor>. "
+                    "Use a summarized version of the dialogue that still preserves the key idea, not every word. "
+                    "The visual anchor should be brief (e.g. 'whisking vigorously', 'folding in chocolate chips').\n\n"
+                    "When there is NO dialogue (transcript is empty, None, or [no speech]): "
+                    "Output ONLY a descriptive visual/action caption. NEVER include 'no speech', '[no speech]', or similar. "
+                    "Use the full narrative context (video title, previous scenes) to infer what the scene shows.\n\n"
+                    "Output one line per scene in order, no extra text before or after."
+                )
+            else:
+                # Original high-fidelity mode: preserve all transcript content.
+                instructions = (
+                    "You are a storyboard caption editor. Create captions that flow as a narrative.\n\n"
+                    "CRITICAL - PRESERVE ORIGINAL CONTENT: Do NOT condense, summarize, or shorten the transcript. "
+                    "Include ALL of the spoken content. Original content cannot be missed. Fix ASR errors (e.g. evything->everything) "
+                    "and grammar only—keep every idea, example, and explanation. Long captions are fine; they will be split automatically.\n\n"
+                    "When there IS dialogue: Format \"<Dialogue>\" — <short visual anchor>. "
+                    "Put the FULL transcript in quotes. When the visual describes a character expression (e.g. mouth open) and the transcript is dialogue, "
+                    "infer the ACTION (e.g. screaming, commanding) in the visual anchor, not the literal pose. "
+                    "Example: transcript 'My soldiers push forward' + visual 'man with mouth open in sky' -> "
+                    "\"My soldiers push forward!\" — a man fiercely shouting his command.\n\n"
+                    "When there is NO dialogue (transcript is empty, None, or [no speech]): "
+                    "Output ONLY a descriptive visual/action caption. NEVER include 'no speech', '[no speech]', or similar. "
+                    "Use the full narrative context (video title, previous scenes) to infer what the scene shows. "
+                    "The visual caption from BLIP may be wrong for chaotic/action shots—use narrative logic to correct it.\n\n"
+                    "Output one line per scene in order, no extra text."
+                )
             prompt = f"{instructions}{cooking_block}\n\n{ctx}\nScenes:\n{joined}\n\nCaptions:"
             response = client.models.generate_content(model=model_name, contents=prompt)
             text = (getattr(response, "text", None) or "").strip()
@@ -581,26 +608,49 @@ class CaptionEnhancer:
                 if video_context and self._is_cooking_video(video_context):
                     cooking_block = self._get_cooking_domain_instructions()
 
-                system_instructions = (
-                    "You are a storyboard caption editor. Create captions that flow as a single "
-                    "narrative, not isolated statements. For each scene, you will be given "
-                    "a visual description and a rough transcript (may contain ASR errors).\n\n"
-                    f"{selective_anchor_block}"
-                    "Task:\n"
-                    "- For every scene, output exactly ONE caption line.\n"
-                    "- Format: \"<Dialogue>\" — <short visual anchor> when a visual anchor is needed; "
-                    "otherwise just \"<Dialogue>\" with no anchor.\n"
-                    "- Put the spoken content first in quotes. The visual anchor (when used) should be brief "
-                    "(a few words, e.g. \"in a Minecraft setting\", \"at a fiery backdrop\").\n"
-                    "- Do NOT include 'Scene N:' or scene numbers.\n"
-                    "- CRITICAL: Preserve ALL original content. Do NOT condense or summarize. Include every idea, "
-                    "example, and explanation from the transcript. Fix ASR errors and grammar only. "
-                    "Original content cannot be missed. Long captions are fine.\n"
-                    "- Use transitional phrasing where it helps (e.g., \"First…\", \"Then…\", "
-                    "\"However…\", \"Ultimately…\") to connect scenes as a story.\n"
-                    "- Maintain thematic continuity across scenes and a clear beginning-middle-end when the content supports it.\n"
-                    "- Output one line per scene in order, no extra text before or after."
-                )
+                if self._summarize_captions:
+                    system_instructions = (
+                        "You are a storyboard caption editor. Create concise captions that still read as a coherent story.\n\n"
+                        "SUMMARIZE: Combine repetitive sentences and remove filler (side comments, jokes, meta-talk about the process, "
+                        "and repeated exclamations) while keeping the key ideas and actions. "
+                        "For cooking/baking, keep the main steps, important ingredients, key quantities, and critical temperature/timing; "
+                        "you may merge multiple spoken sentences into 1–2 clear sentences per scene.\n\n"
+                        f"{selective_anchor_block}"
+                        "Task:\n"
+                        "- For every scene, output exactly ONE caption line.\n"
+                        "- Format: \"<Dialogue>\" — <short visual anchor> when a visual anchor is needed; "
+                        "otherwise just \"<Dialogue>\" with no anchor.\n"
+                        "- Put the summarized spoken content first in quotes. The visual anchor (when used) should be brief "
+                        "(a few words, e.g. \"whisking vigorously\", \"folding in chocolate chips\").\n"
+                        "- Do NOT include 'Scene N:' or scene numbers.\n"
+                        "- It is OK to drop filler chatter that does not change the meaning (e.g. jokes about being tired, "
+                        "comments about using a stand mixer, or repeated 'wow' reactions).\n"
+                        "- Use transitional phrasing where it helps (e.g., \"First…\", \"Then…\", "
+                        "\"However…\", \"Finally…\") to connect scenes as a story.\n"
+                        "- Maintain thematic continuity across scenes and a clear beginning-middle-end when the content supports it.\n"
+                        "- Output one line per scene in order, no extra text before or after."
+                    )
+                else:
+                    system_instructions = (
+                        "You are a storyboard caption editor. Create captions that flow as a single "
+                        "narrative, not isolated statements. For each scene, you will be given "
+                        "a visual description and a rough transcript (may contain ASR errors).\n\n"
+                        f"{selective_anchor_block}"
+                        "Task:\n"
+                        "- For every scene, output exactly ONE caption line.\n"
+                        "- Format: \"<Dialogue>\" — <short visual anchor> when a visual anchor is needed; "
+                        "otherwise just \"<Dialogue>\" with no anchor.\n"
+                        "- Put the spoken content first in quotes. The visual anchor (when used) should be brief "
+                        "(a few words, e.g. \"in a Minecraft setting\", \"at a fiery backdrop\").\n"
+                        "- Do NOT include 'Scene N:' or scene numbers.\n"
+                        "- CRITICAL: Preserve ALL original content. Do NOT condense or summarize. Include every idea, "
+                        "example, and explanation from the transcript. Fix ASR errors and grammar only. "
+                        "Original content cannot be missed. Long captions are fine.\n"
+                        "- Use transitional phrasing where it helps (e.g., \"First…\", \"Then…\", "
+                        "\"However…\", \"Ultimately…\") to connect scenes as a story.\n"
+                        "- Maintain thematic continuity across scenes and a clear beginning-middle-end when the content supports it.\n"
+                        "- Output one line per scene in order, no extra text before or after."
+                    )
                 if cooking_block:
                     system_instructions += cooking_block
 

@@ -15,7 +15,13 @@ class YouTubeHandler:
         output_template = os.path.join(self.download_dir, f"{unique_id}.%(ext)s")
 
         ydl_opts = {
-            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+            # Prefer an MP4 video stream capped at 720p + m4a audio.
+            # This avoids downloading enormous 4K sources, which dominate total processing time
+            # but don't materially improve storyboard quality.
+            'format': (
+                'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]'
+                '/best[height<=720][ext=mp4]/best[ext=mp4]/best'
+            ),
             'outtmpl': output_template,
             'merge_output_format': 'mp4',
         }
