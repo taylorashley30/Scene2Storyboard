@@ -207,81 +207,64 @@ def deduplicate_panel_captions(panels_data: List[Dict]) -> List[Dict]:
 
 def _split_caption_into_chunks(text: str, max_chars: int) -> List[str]:
     """
-    Split text into chunks of ~max_chars, breaking on sentence boundaries.
-    Handles format: "Dialogue" — anchor. The anchor (visual description after " — ")
-    is never split into its own panel; it stays attached to the last dialogue chunk.
+    Split text into chunks based on the overall caption length.
+    Aim for N reasonably balanced chunks instead of cutting strictly at max_chars.
     """
     if len(text) <= max_chars:
         return [text]
 
-    # Extract "Dialogue" — anchor format: anchor must stay with last chunk
+    # 1) Keep your existing anchor handling (" — visual anchor") the same
     dialogue_part = text
     anchor_part = ""
     anchor_match = re.search(r'\s+—\s+(.+)$', text)
     if anchor_match:
         anchor_part = " — " + anchor_match.group(1).strip()
         dialogue_part = text[: anchor_match.start()].strip()
-        # If dialogue + anchor fits in one chunk, no split needed
+        # If everything fits, return as-is
         if len(dialogue_part) + len(anchor_part) <= max_chars:
             return [text]
 
-    # Split on sentence-ending punctuation followed by space or end
-    sentence_pattern = r'(?<=[.!?])\s+'
-    parts = re.split(sentence_pattern, dialogue_part)
-    # Filter empty
-    parts = [p.strip() for p in parts if p.strip()]
+    # 2) Split the dialogue into sentences
+    sentences = _split_into_sentences(dialogue_part)
+    if not sentences:
+        # fallback: your existing clause/length logic
+        ...
 
-    if not parts:
-        # Fallback: split by clause or comma
-        parts = re.split(r'(?<=[,;:])\s+', dialogue_part)
-        parts = [p.strip() for p in parts if p.strip()]
-    if not parts:
-        # Last resort: split by length
-        chunks = []
-        remain = dialogue_part
-        while remain:
-            if len(remain) <= max_chars - len(anchor_part) if anchor_part else max_chars:
-                chunks.append(remain.strip())
-                break
-            break_at = remain.rfind(" ", 0, max_chars + 1)
-            if break_at <= 0:
-                break_at = max_chars
-            chunks.append(remain[:break_at].strip())
-            remain = remain[break_at:].strip()
-        if chunks and anchor_part:
-            chunks[-1] = chunks[-1] + anchor_part
-        return chunks
+    total_chars = sum(len(s) for s in sentences)
 
-    chunks = []
-    current = []
+    # 3) Decide how many chunks we *actually* want
+    #    (e.g., caption of 350 chars with max_chars=180 → 2 chunks)
+    ideal_chunks = max(1, round(total_chars / max_chars))
+    target_per_chunk = max_chars if ideal_chunks == 1 else total_chars / ideal_chunks
+
+    # 4) Build chunks by accumulating sentences up to ~target_per_chunk
+    chunks: List[str] = []
+    current: List[str] = []
     current_len = 0
-    for part in parts:
-        part_with_space = " " + part if current else part
-        if current_len + len(part_with_space) <= max_chars:
-            current.append(part)
-            current_len += len(part_with_space)
+
+    for s in sentences:
+        extra = (1 if current else 0) + len(s)  # space + sentence
+        if current and current_len + extra > target_per_chunk * 1.2:
+            # close current chunk if we are significantly over target
+            chunks.append(" ".join(current))
+            current = [s]
+            current_len = len(s)
         else:
-            if current:
-                chunks.append(" ".join(current))
-            if len(part) > max_chars:
-                # Single part too long: split by length (avoid recursion - part may have no sentence boundaries)
-                while part:
-                    if len(part) <= max_chars:
-                        chunks.append(part.strip())
-                        break
-                    break_at = part.rfind(" ", 0, max_chars + 1)
-                    if break_at <= 0:
-                        break_at = max_chars
-                    chunks.append(part[:break_at].strip())
-                    part = part[break_at:].strip()
-                current = []
-                current_len = 0
-            else:
-                current = [part]
-                current_len = len(part)
+            current.append(s)
+            current_len += extra
+
     if current:
         chunks.append(" ".join(current))
-    # Anchor (visual description after " — ") stays with last chunk, never its own panel
+
+    # 5) Fix tiny tail chunks: merge very short final chunk back
+    MIN_TAIL_CHARS = 30
+    if len(chunks) >= 2 and len(chunks[-1]) < MIN_TAIL_CHARS:
+        chunks[-2] = chunks[-2].rstrip() + " " + chunks[-1].lstrip()
+        chunks.pop()
+
+    # 6) Re‑attach anchor to the last chunk, never as its own panel
     if chunks and anchor_part:
         chunks[-1] = chunks[-1] + anchor_part
+
     return chunks
+    

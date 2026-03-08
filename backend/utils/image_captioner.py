@@ -21,6 +21,20 @@ class ImageCaptioner:
         self.model_name = model_name
         self.processor = None
         self.model = None
+        self.device = None
+
+    def _select_device(self) -> str:
+        """
+        Pick best available device for inference.
+        Priority: CUDA > MPS (Apple Silicon) > CPU
+        """
+        if torch.cuda.is_available():
+            return "cuda"
+        # MPS is available on Apple Silicon when using an MPS-enabled PyTorch build.
+        if getattr(torch.backends, "mps", None) is not None:
+            if torch.backends.mps.is_available() and torch.backends.mps.is_built():
+                return "mps"
+        return "cpu"
     
     def _load_model(self):
         """Load the BLIP model and processor"""
@@ -28,13 +42,11 @@ class ImageCaptioner:
             print(f"Loading BLIP model: {self.model_name}")
             self.processor = BlipProcessor.from_pretrained(self.model_name)
             self.model = BlipForConditionalGeneration.from_pretrained(self.model_name)
-            
-            # Set device (GPU if available, otherwise CPU)
-            if torch.cuda.is_available():
-                self.model.to('cuda')
-                print("BLIP model loaded on GPU")
-            else:
-                print("BLIP model loaded on CPU")
+
+            self.device = self._select_device()
+            self.model.to(self.device)
+            self.model.eval()
+            print(f"BLIP model loaded on {self.device.upper()}")
                 
         except Exception as e:
             print(f"Error loading BLIP model: {e}")
@@ -65,11 +77,11 @@ class ImageCaptioner:
             inputs = self.processor(raw_image, return_tensors="pt")
             
             # Move inputs to the same device as the model
-            if torch.cuda.is_available():
-                inputs = {k: v.to('cuda') for k, v in inputs.items()}
+            if self.device is not None and self.device != "cpu":
+                inputs = {k: v.to(self.device) for k, v in inputs.items()}
             
             # Generate caption
-            with torch.no_grad():
+            with torch.inference_mode():
                 out = self.model.generate(**inputs, max_length=50, num_beams=5)
             
             # Decode the generated caption

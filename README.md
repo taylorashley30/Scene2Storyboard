@@ -97,6 +97,16 @@ If you prefer **no external API at all**, you can leave `GEMINI_API_KEY` unset a
 
 Instagram URLs (posts, reels) are supported via yt-dlp. If a download fails with "login required" or "content not available," Instagram may be blocking unauthenticated access. You can try using cookies (e.g. `--cookies-from-browser` in yt-dlp) by extending the handler if needed.
 
+## Documentation
+
+- `PROJECT_OVERVIEW_AGENT_GUIDE.md`: High-level overview for AI assistants and for quick human navigation to key files.
+- `PRODUCT_REQUIREMENTS_DOCUMENT.md`: Detailed product requirements, pipeline description, and design tradeoffs.
+- `PROJECT_FILE_MAP.md`: File-by-file and pipeline map showing which module handles each step.
+- `PROJECT_STRUCTURE.md`: Directory structure and `backend/scenes/{session_id}` layout (including `metadata.json` schema).
+- `PROJECT_PROGRESS_SUMMARY.md`: Implementation progress, achievements, measured performance, and future ideas.
+- `PITCH_AND_USE_CASES.md`: Non-technical pitch, use cases, and elevator pitch.
+- `Scene2Storyboard.txt`: Long-form implementation guide with additional technical notes.
+
 ## License
 
 This project is open source and available under the MIT License.

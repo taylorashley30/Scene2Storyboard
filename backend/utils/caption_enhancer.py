@@ -174,7 +174,9 @@ class CaptionEnhancer:
             "\nCOOKING/BAKING CONTEXT: Use standard kitchen and baking terminology. "
             "Correct common ASR and vision model errors: 'A-B-A pan' or 'inline pan' → '8x8 pan' "
             "or 'square baking pan'; 'greased inline' → 'greased and lined'; '8 by 8' is fine. "
-            "Prefer standard terms: 8x8, 9x13, loaf pan, sheet pan, etc."
+            "Prefer standard terms: 8x8, 9x13, loaf pan, sheet pan, etc. "
+            "If ASR contains odd tool phrases (e.g. 'no-knife') in a cooking context, interpret as "
+            "'no special tools' / 'no gnocchi board needed' rather than literally mentioning a knife."
         )
 
     def _strip_scene_prefix(self, caption: str) -> str:
@@ -364,6 +366,8 @@ class CaptionEnhancer:
                     "Remove filler words, side comments, jokes, and meta-commentary (e.g. talking about being tired, why a tool is used, "
                     "or complaining about the process) unless they are important to understanding the action. "
                     "Drop repeated exclamations like 'wow, wow, wow' after the first meaningful reaction.\n\n"
+                    "AVOID REPETITION: Do not repeat the same instruction in consecutive scenes. "
+                    "If a step was already stated in the previous scene, make the next caption reflect progress, result, or a new detail.\n\n"
                     "KEEP: important actions, decisions, and outcomes. For cooking/baking, keep the core steps, ingredient names, "
                     "important quantities, temperatures, and timing if mentioned. It's OK to merge several spoken sentences into "
                     "1–2 well-phrased sentences per caption.\n\n"
@@ -602,6 +606,8 @@ class CaptionEnhancer:
                     selective_anchor_block = (
                         f"IMPORTANT: Scenes with visual/character changes (add a short visual anchor): {visual_change_indices}. "
                         "For all other scenes, output ONLY the quoted dialogue, no visual anchor after the quotes.\n"
+                        "EXCEPTION: If the transcript is empty / None / [no speech], output ONLY a visual/action caption "
+                        "(NO quotes), even if the scene is not in the visual-change list.\n"
                     )
 
                 cooking_block = ""
@@ -615,6 +621,8 @@ class CaptionEnhancer:
                         "and repeated exclamations) while keeping the key ideas and actions. "
                         "For cooking/baking, keep the main steps, important ingredients, key quantities, and critical temperature/timing; "
                         "you may merge multiple spoken sentences into 1–2 clear sentences per scene.\n\n"
+                    "AVOID REPETITION: Do not repeat the same instruction in consecutive scenes. "
+                    "If a step was already stated in the previous scene, make the next caption reflect progress, result, or a new detail.\n\n"
                         f"{selective_anchor_block}"
                         "Task:\n"
                         "- For every scene, output exactly ONE caption line.\n"
@@ -764,7 +772,16 @@ class CaptionEnhancer:
 
             if gemini_captions is not None and idx < len(gemini_captions):
                 candidate = gemini_captions[idx].strip()
-                if candidate:
+                # Guard: Gemini can output empty quoted dialogue like "" — <anchor>
+                # when transcript is empty but prompts prefer "quoted dialogue only".
+                # In that case, fall back to rule-based visual caption.
+                transcript_is_empty = not (transcript or "").strip()
+                candidate_is_empty_quotes = bool(
+                    transcript_is_empty
+                    and candidate
+                    and re.match(r'^"\s*"\s*([—\-]\s*.*)?$', candidate)
+                )
+                if candidate and not candidate_is_empty_quotes:
                     enhanced_caption = candidate
                 else:
                     enhanced_caption = self.enhance_caption(

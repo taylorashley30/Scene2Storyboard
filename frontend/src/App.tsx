@@ -1,10 +1,10 @@
-import { useState } from 'react';
-import { VideoInput } from './components/VideoInput';
-import { BentoGrid } from './components/BentoGrid';
-import { ExportControls } from './components/ExportControls';
-import { SavedStoryboards } from './components/SavedStoryboards';
-import { SaveStoryboardButton } from './components/SaveStoryboardButton';
-import './App.css';
+import { useState } from "react";
+import { VideoInput } from "./components/VideoInput";
+import { BentoGrid } from "./components/BentoGrid";
+import { ExportControls } from "./components/ExportControls";
+import { SavedStoryboards } from "./components/SavedStoryboards";
+import { SaveStoryboardButton } from "./components/SaveStoryboardButton";
+import "./App.css";
 
 function App() {
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -22,7 +22,7 @@ function App() {
       <header className="app-header">
         <img src="/favicon.png" alt="" className="app-logo" />
         <h1>Scene2Storyboard</h1>
-        <p>Turn videos into comic-style storyboards</p>
+        <p>Turn videos into visual storyboards</p>
       </header>
 
       {sessionId ? (
@@ -54,7 +54,7 @@ function App() {
               className="saved-toggle-link"
               onClick={() => setShowSaved(!showSaved)}
             >
-              {showSaved ? 'Hide saved storyboards' : 'View saved storyboards'}
+              {showSaved ? "Hide saved storyboards" : "View saved storyboards"}
             </button>
           </div>
           {showSaved && (

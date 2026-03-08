@@ -18,7 +18,7 @@ class AudioTranscriber:
         # Lazily load Whisper so the API server can start instantly.
         # Default to a higher‑quality model for short videos.
         # You can override with env var S2S_WHISPER_MODEL_SIZE.
-        self.model_size = model_size or os.environ.get("S2S_WHISPER_MODEL_SIZE", "large-v2")
+        self.model_size = model_size or os.environ.get("S2S_WHISPER_MODEL_SIZE", "small")
         self.model = None
 
     def _ensure_model_loaded(self) -> None:
@@ -125,6 +125,12 @@ class AudioTranscriber:
             "couchs": "couches",
             "on the business library": "in the business library",
             "on the": "in the",  # Common error
+
+            # Cooking / gnocchi specific ASR artifacts
+            # Whisper can mis-hear "gnocchi board" / "gnocchi knife" style phrases as "no-knife".
+            # Normalize to the intended concept so downstream captioning doesn't literally mention a knife.
+            "no-knife": "gnocchi board",
+            "no knife": "gnocchi board",
             
             # New errors from our test
             "che ": "cheer ",
